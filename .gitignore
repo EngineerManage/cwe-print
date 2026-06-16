@@ -1,0 +1,22 @@
+# Electron
+dist/
+out/
+release/
+build/
+.electron/
+.electron-builder/
+electron-builder-debug.log
+*.asar
+*.app
+*.dmg
+*.pkg
+*.exe
+*.deb
+*.rpm
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+node_modules
+
+.claude
