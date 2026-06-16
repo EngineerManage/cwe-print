@@ -4,6 +4,8 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { configManager } from './utils/config'
 import { logger } from './utils/logger'
 import { serviceManager } from './utils/service-manager'
+import { handlePrintCommand } from './print/engine'
+import { printQueue, type PrintTask } from './print/queue'
 import icon from '../../build/icon.png?asset'
 
 let mainWindow: BrowserWindow | null = null
@@ -116,10 +118,37 @@ ipcMain.handle('printer:list', async () => {
   }))
 })
 
+ipcMain.handle('queue:tasks', () => printQueue.all)
+
+ipcMain.handle('print:reprint', (_event, taskId: string) => {
+  // 从队列历史中找到原任务，提取原始打印指令后重新入队。
+  // 使用新 ID 避免队列里出现重复 ID，同时保留原指令的所有参数。
+  const task = printQueue.all.find((t: PrintTask) => t.id === taskId)
+  if (!task) {
+    return { success: false, error: '任务不存在' }
+  }
+
+  const { status, createdAt, startedAt, completedAt, error, ...cmd } = task
+  const reprintCmd = {
+    ...(cmd as unknown as Record<string, unknown>),
+    id: `${task.id}-reprint-${Date.now()}`
+  }
+
+  handlePrintCommand(reprintCmd as unknown as Parameters<typeof handlePrintCommand>[0])
+  return { success: true }
+})
+
 // 配置变更时通知渲染进程
 configManager.on('changed', (config) => {
   BrowserWindow.getAllWindows().forEach((win) => {
     win.webContents.send('config:changed', config)
+  })
+})
+
+// 打印队列变更时通知渲染进程
+printQueue.on('changed', () => {
+  BrowserWindow.getAllWindows().forEach((win) => {
+    win.webContents.send('queue:changed')
   })
 })
 
@@ -145,9 +174,12 @@ app.on('window-all-closed', () => {
   }
 })
 
+// 防止 before-quit 重复触发导致清理逻辑执行多次
 let isQuitting = false
 
 app.on('before-quit', (event) => {
+  // Electron 不会等待 before-quit 里的异步操作；必须先阻止默认退出，
+  // 等服务清理完成后再手动 app.exit()，否则服务可能没停干净应用就退出了
   if (isQuitting) return
   event.preventDefault()
   isQuitting = true

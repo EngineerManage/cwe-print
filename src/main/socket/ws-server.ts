@@ -88,11 +88,13 @@ export class WsServer {
         resolve()
         return
       }
+      // terminate() 立即关闭 WebSocket，比 close() 更彻底，避免等待握手完成
       for (const client of this.clients) {
         client.terminate()
       }
       this.clients.clear()
 
+      // 兜底超时：防止极少数情况下 server.close() 长时间不回调
       const timer = setTimeout(() => {
         logger.warn('WebSocket 服务关闭超时，强制结束', 'ws')
         this.server = null

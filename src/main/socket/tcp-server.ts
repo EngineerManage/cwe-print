@@ -138,12 +138,14 @@ export class TcpServer {
         resolve()
         return
       }
-      // 断开所有客户端
+      // 断开所有客户端，避免 server.close() 一直等待连接关闭
       for (const client of this.clients) {
         client.destroy()
       }
       this.clients.clear()
 
+      // 兜底超时：如果某个连接未正确触发 close，3 秒后强制认为已关闭，
+      // 防止服务停止卡住导致应用无法退出
       const timer = setTimeout(() => {
         logger.warn('TCP 服务关闭超时，强制结束', 'tcp')
         this.server = null
@@ -151,6 +153,7 @@ export class TcpServer {
         resolve()
       }, 3000)
 
+      // closeAllConnections 在 Node 18+ 提供，可强制关闭所有剩余连接
       ;(this.server as unknown as { closeAllConnections?: () => void }).closeAllConnections?.()
       this.server.close(() => {
         clearTimeout(timer)

@@ -89,6 +89,8 @@ class ServiceManager {
       clearInterval(this.statusTimer)
       this.statusTimer = null
     }
+    // 同时停止 TCP 和 WebSocket 服务，并设置整体超时。
+    // 只要任一服务关闭完成或超时，就继续退出流程，避免应用关不掉。
     await Promise.race([
       Promise.all([this.tcpServer.stop(), this.wsServer.stop()]),
       new Promise<void>((_, reject) => {

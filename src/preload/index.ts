@@ -13,6 +13,11 @@ export interface Api {
   // 打印机
   getPrinters: () => Promise<PrinterInfo[]>
 
+  // 打印任务：列表模式展示、重打、以及队列变更通知
+  getPrintTasks: () => Promise<PrintTask[]>
+  reprintTask: (taskId: string) => Promise<{ success: boolean; error?: string }>
+  onPrintQueueChange: (callback: () => void) => () => void
+
   // 日志
   onLog: (callback: (log: LogEntry) => void) => () => void
 }
@@ -36,6 +41,25 @@ export interface PrinterInfo {
   description: string
   status: number
   isDefault: boolean
+}
+
+export interface PrintTask {
+  id: string
+  type: 'print'
+  format: 'pdf' | 'html' | 'image' | 'escpos'
+  content: string
+  printer?: string
+  copies?: number
+  paperSize?: unknown
+  margins?: unknown
+  position?: unknown
+  blocks?: unknown
+  options?: Record<string, unknown>
+  status: 'pending' | 'printing' | 'success' | 'failed'
+  createdAt: string
+  startedAt?: string
+  completedAt?: string
+  error?: string
 }
 
 export interface LogEntry {
@@ -62,6 +86,14 @@ const api: Api = {
   },
 
   getPrinters: () => ipcRenderer.invoke('printer:list'),
+
+  getPrintTasks: () => ipcRenderer.invoke('queue:tasks'),
+  reprintTask: (taskId) => ipcRenderer.invoke('print:reprint', taskId),
+  onPrintQueueChange: (callback) => {
+    const handler = () => callback()
+    ipcRenderer.on('queue:changed', handler)
+    return () => ipcRenderer.off('queue:changed', handler)
+  },
 
   onLog: (callback) => {
     const handler = (_: unknown, log: LogEntry) => callback(log)
