@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
-import type { ServiceStatus, PrinterInfo } from '../../preload'
+import type { ServiceStatus, PrinterInfo } from '../../../preload'
 
 const status = ref<ServiceStatus>({
   tcp: { running: false, port: 0, clients: 0 },

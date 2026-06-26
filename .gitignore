@@ -2,7 +2,6 @@
 dist/
 out/
 release/
-build/
 .electron/
 .electron-builder/
 electron-builder-debug.log

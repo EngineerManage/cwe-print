@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch } from 'vue'
-import type { AppConfig } from '../../preload'
+import { ref, onMounted, onUnmounted } from 'vue'
+import type { AppConfig } from '../../../preload'
 
 const config = ref<AppConfig>({
   tcpPort: 9527,

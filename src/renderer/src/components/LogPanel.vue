@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
-import type { LogEntry, PrintTask } from '../../preload'
+import type { LogEntry, PrintTask } from '../../../preload'
 
 type ViewMode = 'log' | 'list'
 

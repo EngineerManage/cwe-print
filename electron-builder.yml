@@ -34,4 +34,8 @@ nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: always
+publish:
+  provider: github
+  owner: EngineerManage
+  repo: cwe-print
 copyright: Copyright © 2026 CWE
