@@ -1,17 +1,38 @@
 import { BrowserWindow } from 'electron'
 import { logger } from '../utils/logger'
+import { configManager } from '../utils/config'
 import { printQueue } from './queue'
 import type { PrintTask } from './queue'
 import type { PrintCommand, PrintBlock } from '../socket/tcp-server'
 import { getPaperDimensions, toElectronPageSize, DEFAULT_MARGINS } from './paper-sizes'
 
-export async function handlePrintCommand(cmd: PrintCommand): Promise<{ taskId: string; status: string }> {
+export async function handlePrintCommand(cmd: PrintCommand): Promise<{ taskId: string; status: string; error?: string }> {
   const task = printQueue.enqueue(cmd)
 
   // 触发队列处理（异步）
   processQueue()
 
-  return { taskId: task.id, status: task.status }
+  await waitForTaskDone(task.id)
+
+  return { taskId: task.id, status: task.status, error: task.error }
+}
+
+function waitForTaskDone(taskId: string): Promise<void> {
+  const isDone = (): boolean => {
+    const task = printQueue.all.find((item) => item.id === taskId)
+    return task?.status === 'success' || task?.status === 'failed'
+  }
+
+  if (isDone()) return Promise.resolve()
+
+  return new Promise((resolve) => {
+    const onChanged = (): void => {
+      if (!isDone()) return
+      printQueue.off('changed', onChanged)
+      resolve()
+    }
+    printQueue.on('changed', onChanged)
+  })
 }
 
 async function processQueue(): Promise<void> {
@@ -59,10 +80,7 @@ async function printHtml(task: PrintTask): Promise<void> {
 
     await win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(wrappedHtml)}`)
 
-    // 等待内容渲染完成
-    await new Promise<void>((resolve) => {
-      setTimeout(resolve, 500)
-    })
+    await waitForRenderReady(win)
 
     // 构建 Electron print 选项
     const printOptions = buildElectronPrintOptions(task)
@@ -82,6 +100,21 @@ async function printHtml(task: PrintTask): Promise<void> {
   } finally {
     win.destroy()
   }
+}
+
+async function waitForRenderReady(win: BrowserWindow): Promise<void> {
+  await win.webContents.executeJavaScript(`
+    Promise.all([
+      document.fonts ? document.fonts.ready : Promise.resolve(),
+      Promise.all(Array.from(document.images).map((img) => {
+        if (img.complete) return Promise.resolve();
+        return new Promise((resolve) => {
+          img.onload = resolve;
+          img.onerror = resolve;
+        });
+      }))
+    ])
+  `)
 }
 
 async function printImage(task: PrintTask): Promise<void> {
@@ -205,7 +238,7 @@ function buildElectronPrintOptions(task: PrintTask): Record<string, unknown> {
   const options: Record<string, unknown> = {
     silent: true,
     printBackground: true,
-    deviceName: task.printer || '',
+    deviceName: task.printer || configManager.get().defaultPrinter || '',
     copies: task.copies || 1
   }
 

@@ -125,7 +125,12 @@ export class TcpServer {
       }
       logger.info(`收到打印指令: ${cmd.id}, 格式: ${cmd.format}`, 'tcp')
       const result = this.handler ? await this.handler(cmd, socket) : { success: false, error: '未设置处理器' }
-      socket.write(JSON.stringify({ success: true, result }) + '\n')
+      const failed = typeof result === 'object' && result !== null && 'status' in result && result.status === 'failed'
+      socket.write(JSON.stringify({
+        success: !failed,
+        result,
+        error: failed && 'error' in result ? result.error : undefined
+      }) + '\n')
     } catch (err) {
       logger.error(`解析指令失败: ${(err as Error).message}`, 'tcp')
       socket.write(JSON.stringify({ success: false, error: '指令格式错误' }) + '\n')

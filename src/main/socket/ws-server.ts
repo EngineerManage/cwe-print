@@ -52,7 +52,12 @@ export class WsServer {
           }
           logger.info(`收到打印指令: ${cmd.id}, 格式: ${cmd.format}`, 'ws')
           const result = this.handler ? await this.handler(cmd, ws) : { success: false, error: '未设置处理器' }
-          ws.send(JSON.stringify({ success: true, result }))
+          const failed = typeof result === 'object' && result !== null && 'status' in result && result.status === 'failed'
+          ws.send(JSON.stringify({
+            success: !failed,
+            result,
+            error: failed && 'error' in result ? result.error : undefined
+          }))
         } catch (err) {
           logger.error(`解析指令失败: ${(err as Error).message}`, 'ws')
           ws.send(JSON.stringify({ success: false, error: '指令格式错误' }))

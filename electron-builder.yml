@@ -26,10 +26,12 @@ mac:
     - NSDownloadsFolderUsageDescription: Application requests access to the user's Downloads folder.
 win:
   icon: build/icon.png
+  artifactName: ${productName}-${version}-win-${arch}.${ext}
   target:
     - target: nsis
       arch:
         - x64
+        - ia32
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
