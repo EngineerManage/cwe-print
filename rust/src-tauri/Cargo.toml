@@ -1,0 +1,26 @@
+[package]
+name = "cwe-print-rust"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "cwe_print_rust_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[dependencies]
+anyhow = "1.0"
+chrono = { version = "0.4", features = ["serde"] }
+dirs = "5.0"
+futures-util = "0.3"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tempfile = "3.10"
+tokio = { version = "1.38", features = ["macros", "net", "rt-multi-thread", "signal", "sync", "time", "io-util"] }
+tokio-tungstenite = "0.23"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1.8", features = ["v4"] }
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
