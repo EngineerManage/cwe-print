@@ -11,12 +11,18 @@ use app_state::{AppState, PartialAppConfig};
 use config::AppConfig;
 use models::{PrintCommand, PrintResult, PrintTask, ServiceStatus};
 use serde::Serialize;
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+use std::process::Command;
 use tauri::{
     App, AppHandle, Manager, State, WebviewWindow, WindowEvent,
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
 };
 use tracing_subscriber::{EnvFilter, fmt};
+
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -76,19 +82,8 @@ async fn reprint_task(state: State<'_, AppState>, task_id: String) -> Result<Pri
 }
 
 #[tauri::command]
-fn get_printers(state: State<'_, AppState>) -> Vec<PrinterInfo> {
-    let config = state.config();
-    let default_name = config.default_printer.trim().to_string();
-    if default_name.is_empty() {
-        Vec::new()
-    } else {
-        vec![PrinterInfo {
-            name: default_name.clone(),
-            description: "默认打印机配置".to_string(),
-            status: 0,
-            is_default: true,
-        }]
-    }
+fn get_printers() -> Vec<PrinterInfo> {
+    list_system_printers().unwrap_or_default()
 }
 
 pub fn run() {
@@ -209,6 +204,94 @@ fn init_tracing(level: &str) {
         .with_target(false)
         .compact()
         .try_init();
+}
+
+#[cfg(target_os = "windows")]
+fn list_system_printers() -> anyhow::Result<Vec<PrinterInfo>> {
+    let mut cmd = Command::new("powershell");
+    cmd.creation_flags(CREATE_NO_WINDOW);
+    let output = cmd
+        .arg("-NoProfile")
+        .arg("-Command")
+        .arg("Get-CimInstance Win32_Printer | Select-Object Name,DriverName,PrinterStatus,Default | ConvertTo-Json -Compress")
+        .output()?;
+
+    if !output.status.success() {
+        return Ok(Vec::new());
+    }
+
+    let raw = String::from_utf8_lossy(&output.stdout);
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let value: serde_json::Value = serde_json::from_str(raw)?;
+    let items = match value {
+        serde_json::Value::Array(items) => items,
+        item => vec![item],
+    };
+
+    Ok(items
+        .into_iter()
+        .filter_map(|item| {
+            let name = item.get("Name")?.as_str()?.to_string();
+            Some(PrinterInfo {
+                description: item
+                    .get("DriverName")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("系统打印机")
+                    .to_string(),
+                status: item
+                    .get("PrinterStatus")
+                    .and_then(serde_json::Value::as_i64)
+                    .unwrap_or(0) as i32,
+                is_default: item
+                    .get("Default")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false),
+                name,
+            })
+        })
+        .collect())
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn list_system_printers() -> anyhow::Result<Vec<PrinterInfo>> {
+    let output = Command::new("lpstat").arg("-p").arg("-d").output()?;
+    if !output.status.success() {
+        return Ok(Vec::new());
+    }
+
+    let raw = String::from_utf8_lossy(&output.stdout);
+    let default_name = raw.lines().find_map(|line| {
+        line.strip_prefix("system default destination: ")
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+    });
+
+    Ok(raw
+        .lines()
+        .filter_map(|line| {
+            let rest = line.strip_prefix("printer ")?;
+            let (name, _) = rest.split_once(' ')?;
+            Some(PrinterInfo {
+                name: name.to_string(),
+                description: line.to_string(),
+                status: if line.contains(" is idle") || line.contains(" now printing") {
+                    0
+                } else {
+                    1
+                },
+                is_default: default_name == Some(name),
+            })
+        })
+        .collect())
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+fn list_system_printers() -> anyhow::Result<Vec<PrinterInfo>> {
+    Ok(Vec::new())
 }
 
 fn to_string(err: anyhow::Error) -> String {

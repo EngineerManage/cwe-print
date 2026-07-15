@@ -72,11 +72,40 @@ const autoScroll = ref(true)
 const saving = ref(false)
 const saveMsg = ref('')
 
+const printerOptions = computed(() => {
+  const options = [...printers.value]
+  const selected = config.value.defaultPrinter.trim()
+  if (selected && !options.some((printer) => printer.name === selected)) {
+    options.unshift({
+      name: selected,
+      description: '已保存，当前未在系统打印机列表中',
+      status: -1,
+      isDefault: false
+    })
+  }
+  return options
+})
+
 const filteredLogs = computed(() => {
-  return logs.value.filter((log) => {
+  return taskLogs.value.filter((log) => {
     if (filterLevel.value !== 'all' && log.level !== filterLevel.value) return false
     if (filterSource.value !== 'all' && log.source !== filterSource.value) return false
     return true
+  })
+})
+
+const taskLogs = computed<LogEntry[]>(() => {
+  return tasks.value.map((task) => {
+    const printer = task.printer || '系统默认打印机'
+    const time = task.completedAt || task.createdAt
+    const level: LogEntry['level'] = task.status === 'failed' ? 'error' : 'info'
+    const suffix = task.error ? `，错误: ${task.error}` : ''
+    return {
+      time,
+      level,
+      source: 'queue',
+      message: `${statusText(task.status)}: ${task.id}，格式: ${task.format}，打印机: ${printer}${suffix}`
+    }
   })
 })
 
@@ -153,8 +182,8 @@ async function reprint(task: PrintTask) {
   }
 }
 
-function clearLogs() {
-  logs.value = []
+function refreshLogs() {
+  refreshRuntime()
 }
 
 function pushLog(level: LogEntry['level'], source: string, message: string) {
@@ -387,8 +416,16 @@ function sourceColor(source: string) {
           <div class="form-row">
             <label class="form-label">默认打印机</label>
             <div class="form-input-wrap">
-              <input v-model="config.defaultPrinter" class="form-input" placeholder="留空则使用系统默认打印机" />
-              <span class="form-hint">打印指令未指定打印机时使用此打印机，留空则使用系统默认</span>
+              <div class="printer-select-row">
+                <select v-model="config.defaultPrinter" class="form-input">
+                  <option value="">使用系统默认打印机</option>
+                  <option v-for="printer in printerOptions" :key="printer.name" :value="printer.name">
+                    {{ printer.name }}{{ printer.isDefault ? '（系统默认）' : '' }}
+                  </option>
+                </select>
+                <button class="refresh-btn" @click="refreshPrinters">刷新</button>
+              </div>
+              <span class="form-hint">打印指令未指定打印机时使用此打印机；选择“使用系统默认打印机”则不指定打印机</span>
             </div>
           </div>
         </div>
@@ -426,7 +463,7 @@ function sourceColor(source: string) {
               <input v-model="autoScroll" type="checkbox" />
               自动滚动
             </label>
-            <button class="clear-btn" @click="clearLogs">清空</button>
+            <button class="clear-btn" @click="refreshLogs">刷新</button>
           </div>
           <div class="view-toggle">
             <button :class="['toggle-btn', { active: viewMode === 'log' }]" @click="viewMode = 'log'">日志模式</button>
@@ -710,6 +747,20 @@ function sourceColor(source: string) {
   border-color: #409eff;
 }
 
+.printer-select-row {
+  display: flex;
+  gap: 8px;
+}
+
+.printer-select-row .form-input {
+  min-width: 0;
+}
+
+.printer-select-row .refresh-btn {
+  height: 32px;
+  flex-shrink: 0;
+}
+
 .printer-list {
   overflow: hidden;
 }
@@ -981,8 +1032,8 @@ input:checked + .slider::before {
 }
 
 .clear-btn:hover {
-  color: #f56c6c;
-  border-color: #f56c6c;
+  color: #409eff;
+  border-color: #409eff;
 }
 
 .log-container {

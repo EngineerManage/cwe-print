@@ -4,6 +4,8 @@ use crate::{
     paper,
 };
 use anyhow::Context;
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
 use std::{
     path::Path,
     process::Command,
@@ -11,6 +13,9 @@ use std::{
 };
 use tokio::task;
 use tracing::{info, warn};
+
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 #[derive(Clone)]
 pub struct PrintEngine {
@@ -147,6 +152,11 @@ impl PrintEngine {
 }
 
 fn run_print_command(mut cmd: Command) -> anyhow::Result<()> {
+    #[cfg(target_os = "windows")]
+    {
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+
     let output = cmd.output().context("执行系统打印命令失败")?;
     if !output.status.success() {
         anyhow::bail!(

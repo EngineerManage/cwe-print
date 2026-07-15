@@ -4,27 +4,16 @@ import type { LogEntry, PrintTask } from '../../../preload'
 
 type ViewMode = 'log' | 'list'
 
-const logs = ref<LogEntry[]>([])
 const tasks = ref<PrintTask[]>([])
 const viewMode = ref<ViewMode>('log')
 const autoScroll = ref(true)
 const filterLevel = ref<string>('all')
 const filterSource = ref<string>('all')
 
-let unbindLog: (() => void) | null = null
 let unbindQueue: (() => void) | null = null
 
 onMounted(() => {
-  // 日志模式：实时追加运行日志
-  unbindLog = window.electronAPI.onLog((entry) => {
-    logs.value.push(entry)
-    // 限制内存占用，只保留最近 500 条
-    if (logs.value.length > 500) {
-      logs.value.shift()
-    }
-  })
-
-  // 列表模式：初始化加载一次任务，并订阅队列变更事件做增量刷新
+  // 日志模式和列表模式使用同一份打印任务数据，只是展示形态不同。
   loadTasks()
   unbindQueue = window.electronAPI.onPrintQueueChange(() => {
     loadTasks()
@@ -32,7 +21,6 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
-  unbindLog?.()
   unbindQueue?.()
 })
 
@@ -46,10 +34,6 @@ async function reprint(task: PrintTask) {
   if (!result.success) {
     console.error('重打失败:', result.error)
   }
-}
-
-function clearLogs() {
-  logs.value = []
 }
 
 function formatTime(iso: string) {
@@ -109,10 +93,25 @@ function statusClass(status: string) {
 }
 
 const filteredLogs = computed(() => {
-  return logs.value.filter((log) => {
+  return taskLogs.value.filter((log) => {
     if (filterLevel.value !== 'all' && log.level !== filterLevel.value) return false
     if (filterSource.value !== 'all' && log.source !== filterSource.value) return false
     return true
+  })
+})
+
+const taskLogs = computed<LogEntry[]>(() => {
+  return tasks.value.map((task) => {
+    const printer = task.printer || '系统默认打印机'
+    const time = task.completedAt || task.startedAt || task.createdAt
+    const level = task.status === 'failed' ? 'error' : 'info'
+    const suffix = task.error ? `，错误: ${task.error}` : ''
+    return {
+      time,
+      level,
+      source: 'queue',
+      message: `${statusText(task.status)}: ${task.id}，格式: ${task.format}，打印机: ${printer}${suffix}`
+    }
   })
 })
 </script>
@@ -141,7 +140,7 @@ const filteredLogs = computed(() => {
           <input v-model="autoScroll" type="checkbox" />
           自动滚动
         </label>
-        <button class="clear-btn" @click="clearLogs">清空</button>
+        <button class="clear-btn" @click="loadTasks">刷新</button>
       </div>
       <!-- 日志/列表模式切换：独立块，与 filters 分开，避免 filters 显隐导致布局抖动 -->
       <div class="view-toggle">
@@ -281,8 +280,8 @@ const filteredLogs = computed(() => {
 }
 
 .clear-btn:hover {
-  color: #f56c6c;
-  border-color: #f56c6c;
+  color: #409eff;
+  border-color: #409eff;
 }
 
 .log-container {

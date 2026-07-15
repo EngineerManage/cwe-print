@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
-import type { AppConfig } from '../../../preload'
+import { computed, ref, onMounted, onUnmounted } from 'vue'
+import type { AppConfig, PrinterInfo } from '../../../preload'
 
 const config = ref<AppConfig>({
   tcpPort: 9527,
@@ -13,11 +13,30 @@ const config = ref<AppConfig>({
 const saving = ref(false)
 const saveMsg = ref('')
 const restarting = ref(false)
+const printers = ref<PrinterInfo[]>([])
+
+const printerOptions = computed(() => {
+  const options = [...printers.value]
+  const selected = config.value.defaultPrinter.trim()
+  if (selected && !options.some((printer) => printer.name === selected)) {
+    options.unshift({
+      name: selected,
+      description: '已保存，当前未在系统打印机列表中',
+      status: -1,
+      isDefault: false
+    })
+  }
+  return options
+})
 
 let unbindConfig: (() => void) | null = null
 
 async function loadConfig() {
   config.value = await window.electronAPI.getConfig()
+}
+
+async function refreshPrinters() {
+  printers.value = await window.electronAPI.getPrinters()
 }
 
 async function saveConfig() {
@@ -46,7 +65,7 @@ async function saveConfig() {
 }
 
 onMounted(async () => {
-  await loadConfig()
+  await Promise.all([loadConfig(), refreshPrinters()])
   unbindConfig = window.electronAPI.onConfigChange((c) => {
     config.value = c
   })
@@ -120,13 +139,21 @@ onUnmounted(() => {
       <div class="form-row">
         <label class="form-label">默认打印机</label>
         <div class="form-input-wrap">
-          <input
-            v-model="config.defaultPrinter"
-            class="form-input"
-            placeholder="留空则使用系统默认打印机"
-          />
+          <div class="printer-select-row">
+            <select v-model="config.defaultPrinter" class="form-input">
+              <option value="">使用系统默认打印机</option>
+              <option
+                v-for="printer in printerOptions"
+                :key="printer.name"
+                :value="printer.name"
+              >
+                {{ printer.name }}{{ printer.isDefault ? '（系统默认）' : '' }}
+              </option>
+            </select>
+            <button type="button" class="refresh-btn" @click="refreshPrinters">刷新</button>
+          </div>
           <span class="form-hint">
-            打印指令未指定打印机时使用此打印机，留空则使用系统默认
+            打印指令未指定打印机时使用此打印机；选择“使用系统默认打印机”则不指定打印机
           </span>
         </div>
       </div>
@@ -233,6 +260,32 @@ onUnmounted(() => {
 .form-hint {
   font-size: 12px;
   color: #909399;
+}
+
+.printer-select-row {
+  display: flex;
+  gap: 8px;
+}
+
+.printer-select-row .form-input {
+  min-width: 0;
+}
+
+.refresh-btn {
+  height: 32px;
+  padding: 0 12px;
+  font-size: 12px;
+  border: 1px solid #dcdfe6;
+  background: #fff;
+  border-radius: 4px;
+  cursor: pointer;
+  color: #606266;
+  flex-shrink: 0;
+}
+
+.refresh-btn:hover {
+  color: #409eff;
+  border-color: #409eff;
 }
 
 .switch {
