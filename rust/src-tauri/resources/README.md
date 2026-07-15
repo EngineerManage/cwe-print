@@ -1,5 +1,5 @@
 # Bundled resources
 
-Place `SumatraPDF.exe` in this directory before building Windows installers.
+Windows installers include `webview2-print-helper/WebView2PrintHelper.exe`.
 
-The Rust app uses it for silent PDF printing on Windows after rendering HTML to PDF.
+The Rust app uses this helper for silent WebView2 printing on Windows.

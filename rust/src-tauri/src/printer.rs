@@ -1,3 +1,5 @@
+#[cfg(target_os = "windows")]
+use crate::models::PrintMargins;
 use crate::{
     config::AppConfig,
     models::{PrintBlock, PrintCommand, PrintFormat, PrintTask},
@@ -18,6 +20,18 @@ use tracing::{info, warn};
 
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+#[cfg(target_os = "windows")]
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WebView2PrintRequest {
+    source_path: String,
+    printer_name: Option<String>,
+    copies: u32,
+    page_width_mm: Option<f64>,
+    page_height_mm: Option<f64>,
+    margins_mm: PrintMargins,
+}
 
 #[derive(Clone)]
 pub struct PrintEngine {
@@ -76,11 +90,20 @@ impl PrintEngine {
 
         let temp_dir = tempfile::Builder::new().prefix("cwe-print-").tempdir()?;
         let html_path = temp_dir.path().join("document.html");
-        let pdf_path = temp_dir.path().join("document.pdf");
         fs::write(&html_path, html).context("写入临时 HTML 文件失败")?;
 
-        render_html_to_pdf(&html_path, &pdf_path)?;
-        self.print_pdf_file(&pdf_path, command, config)
+        #[cfg(target_os = "windows")]
+        {
+            self.print_document_with_webview2(&html_path, command, config)?;
+            Ok(None)
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            let pdf_path = temp_dir.path().join("document.pdf");
+            render_html_to_pdf(&html_path, &pdf_path)?;
+            self.print_pdf_file(&pdf_path, command, config)
+        }
     }
 
     fn print_image(
@@ -165,10 +188,35 @@ impl PrintEngine {
 
         #[cfg(target_os = "windows")]
         {
-            print_pdf_windows(path, printer, copies)?;
+            let _ = printer;
+            let _ = copies;
+            self.print_document_with_webview2(path, command, config)?;
         }
 
         Ok(None)
+    }
+
+    #[cfg(target_os = "windows")]
+    fn print_document_with_webview2(
+        &self,
+        path: &Path,
+        command: &PrintCommand,
+        config: &AppConfig,
+    ) -> anyhow::Result<()> {
+        let helper = find_webview2_print_helper().ok_or_else(|| {
+            anyhow::anyhow!("未找到 WebView2PrintHelper.exe，无法执行 Windows WebView2 静默打印")
+        })?;
+        let request_path = write_webview2_print_request(path, command, config)?;
+
+        let mut cmd = Command::new(helper);
+        cmd.arg(&request_path);
+        run_print_command(cmd).with_context(|| {
+            format!(
+                "WebView2 静默打印失败，文件: {}, 请求: {}",
+                path.display(),
+                request_path.display()
+            )
+        })
     }
 }
 
@@ -330,38 +378,56 @@ fn encode_url_path(path: &str) -> String {
 }
 
 #[cfg(target_os = "windows")]
-fn print_pdf_windows(path: &Path, printer: Option<&str>, copies: u32) -> anyhow::Result<()> {
-    let sumatra = find_sumatra_pdf().ok_or_else(|| {
-        anyhow::anyhow!(
-            "未找到 SumatraPDF.exe，无法执行 Windows PDF 静默打印；请将 SumatraPDF.exe 放到应用目录或 resources 目录"
-        )
-    })?;
+fn write_webview2_print_request(
+    path: &Path,
+    command: &PrintCommand,
+    config: &AppConfig,
+) -> anyhow::Result<PathBuf> {
+    let printer = command
+        .printer
+        .as_deref()
+        .or_else(|| default_printer(config))
+        .map(str::to_string);
+    let copies = command.copies.unwrap_or(1).max(1);
+    let margins = command.margins.clone().unwrap_or_default();
+    let (page_width_mm, page_height_mm) = match &command.paper_size {
+        Some(size) => {
+            let dim = paper::dimensions(size)?;
+            (Some(dim.width_mm), Some(dim.height_mm))
+        }
+        None => (None, None),
+    };
 
-    let mut cmd = Command::new(sumatra);
-    if let Some(printer) = printer {
-        cmd.arg("-print-to").arg(printer);
-    } else {
-        cmd.arg("-print-to-default");
-    }
-    cmd.arg("-print-settings")
-        .arg(format!("{copies}x"))
-        .arg("-silent")
-        .arg("-exit-when-done")
-        .arg(path);
-    run_print_command(cmd)
+    let request = WebView2PrintRequest {
+        source_path: path.canonicalize()?.display().to_string(),
+        printer_name: printer,
+        copies,
+        page_width_mm,
+        page_height_mm,
+        margins_mm: margins,
+    };
+
+    let request_dir = tempfile::Builder::new()
+        .prefix("cwe-print-webview2-")
+        .tempdir()?
+        .keep();
+    let request_path = request_dir.join("request.json");
+    fs::write(&request_path, serde_json::to_vec_pretty(&request)?)
+        .context("写入 WebView2 打印请求失败")?;
+    Ok(request_path)
 }
 
 #[cfg(target_os = "windows")]
-fn find_sumatra_pdf() -> Option<PathBuf> {
-    for candidate in sumatra_pdf_candidates() {
+fn find_webview2_print_helper() -> Option<PathBuf> {
+    for candidate in webview2_print_helper_candidates() {
         if candidate.components().count() > 1 && !candidate.exists() {
             continue;
         }
 
         let mut cmd = Command::new(&candidate);
-        cmd.arg("-version");
+        cmd.arg("--help");
         hide_command_window(&mut cmd);
-        if cmd.output().is_ok_and(|output| output.status.success()) {
+        if cmd.output().is_ok() {
             return Some(candidate);
         }
     }
@@ -369,29 +435,25 @@ fn find_sumatra_pdf() -> Option<PathBuf> {
 }
 
 #[cfg(target_os = "windows")]
-fn sumatra_pdf_candidates() -> Vec<PathBuf> {
+fn webview2_print_helper_candidates() -> Vec<PathBuf> {
     let mut candidates = Vec::new();
 
     if let Ok(exe) = env::current_exe()
         && let Some(dir) = exe.parent()
     {
-        candidates.push(dir.join("SumatraPDF.exe"));
-        candidates.push(dir.join("resources/SumatraPDF.exe"));
+        candidates.push(dir.join("WebView2PrintHelper.exe"));
+        candidates.push(dir.join("resources/WebView2PrintHelper.exe"));
+        candidates.push(dir.join("resources/webview2-print-helper/WebView2PrintHelper.exe"));
     }
 
-    candidates.push(PathBuf::from("resources/SumatraPDF.exe"));
-    candidates.push(PathBuf::from("src-tauri/resources/SumatraPDF.exe"));
-
-    if let Some(program_files) = env::var_os("ProgramFiles") {
-        candidates.push(PathBuf::from(program_files).join("SumatraPDF/SumatraPDF.exe"));
-    }
-    if let Some(program_files_x86) = env::var_os("ProgramFiles(x86)") {
-        candidates.push(PathBuf::from(program_files_x86).join("SumatraPDF/SumatraPDF.exe"));
-    }
-    if let Some(local_app_data) = env::var_os("LOCALAPPDATA") {
-        candidates.push(PathBuf::from(local_app_data).join("SumatraPDF/SumatraPDF.exe"));
-    }
-    candidates.push(PathBuf::from("SumatraPDF.exe"));
+    candidates.push(PathBuf::from("resources/WebView2PrintHelper.exe"));
+    candidates.push(PathBuf::from(
+        "resources/webview2-print-helper/WebView2PrintHelper.exe",
+    ));
+    candidates.push(PathBuf::from(
+        "src-tauri/resources/webview2-print-helper/WebView2PrintHelper.exe",
+    ));
+    candidates.push(PathBuf::from("WebView2PrintHelper.exe"));
 
     candidates
 }

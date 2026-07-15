@@ -41,6 +41,13 @@ type PrintTask = {
   error?: string
 }
 
+type PrintResult = {
+  taskId: string
+  status: 'pending' | 'printing' | 'success' | 'failed'
+  outputPath?: string
+  error?: string
+}
+
 type LogEntry = {
   time: string
   level: 'debug' | 'info' | 'warn' | 'error'
@@ -154,7 +161,7 @@ async function saveConfig() {
 
 async function submitTestPrint() {
   try {
-    await invoke('submit_print', {
+    const result = await invoke<PrintResult>('submit_print', {
       command: {
         id: `test-${Date.now()}`,
         type: 'print',
@@ -167,10 +174,17 @@ async function submitTestPrint() {
         position: { top: 12, left: 12 }
       }
     })
-    pushLog('info', 'queue', '测试打印任务已提交')
     await refreshRuntime()
+    if (result.outputPath) {
+      saveMsg.value = `Dry-run PDF 已生成: ${result.outputPath}`
+    } else {
+      saveMsg.value = '测试打印任务已提交'
+    }
+    setTimeout(() => {
+      saveMsg.value = ''
+    }, 8000)
   } catch (err) {
-    pushLog('error', 'queue', `测试打印失败: ${String(err)}`)
+    saveMsg.value = `测试打印失败: ${String(err)}`
   }
 }
 
@@ -437,7 +451,7 @@ function sourceColor(source: string) {
             {{ saving ? '保存中...' : '保存配置并重启服务' }}
           </button>
           <button class="test-btn" @click="submitTestPrint">发送测试打印</button>
-          <span v-if="saveMsg" :class="['save-msg', { error: saveMsg.startsWith('保存失败') }]">{{ saveMsg }}</span>
+          <span v-if="saveMsg" :class="['save-msg', { error: saveMsg.includes('失败') }]">{{ saveMsg }}</span>
         </div>
 
       </section>
@@ -496,9 +510,9 @@ function sourceColor(source: string) {
                   <span>格式: {{ task.format }}</span>
                   <span>创建: {{ formatDateTime(task.createdAt) }}</span>
                   <span v-if="task.printer">打印机: {{ task.printer }}</span>
-                  <span v-if="task.outputPath" class="task-output" :title="task.outputPath">
-                    输出: {{ task.outputPath }}
-                  </span>
+                </div>
+                <div v-if="task.outputPath" class="task-output" :title="task.outputPath">
+                  输出 PDF: {{ task.outputPath }}
                 </div>
                 <div v-if="task.error" class="task-error">{{ task.error }}</div>
               </div>

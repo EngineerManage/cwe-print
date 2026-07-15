@@ -19,5 +19,7 @@ yarn-error.log*
 node_modules
 target/
 rust/src-tauri/gen/
+rust/webview2-print-helper/bin/
+rust/webview2-print-helper/obj/
 
 .claude

@@ -92,6 +92,12 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Setup .NET
+        if: matrix.platform == 'win'
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
         with:
@@ -112,27 +118,20 @@ jobs:
           test -f rust/src-tauri/icons/128x128.png
           test -f rust/src-tauri/icons/128x128@2x.png
 
-      - name: Download SumatraPDF for silent printing
+      - name: Build WebView2 print helper
         if: matrix.platform == 'win'
         shell: pwsh
         run: |
-          $version = "3.6.1"
-          $url = "https://www.sumatrapdfreader.org/dl/rel/$version/SumatraPDF-$version-64.zip"
-          $resources = "rust/src-tauri/resources"
-          $zip = "$env:RUNNER_TEMP/SumatraPDF.zip"
-          $extract = "$env:RUNNER_TEMP/SumatraPDF"
-
-          New-Item -ItemType Directory -Force -Path $resources | Out-Null
-          Invoke-WebRequest -Uri $url -OutFile $zip
-          Expand-Archive -Path $zip -DestinationPath $extract -Force
-
-          $exe = Get-ChildItem -Path $extract -Recurse -Filter "SumatraPDF*.exe" | Select-Object -First 1
-          if (-not $exe) {
-            throw "SumatraPDF.exe not found after extracting $zip"
-          }
-
-          Copy-Item -Path $exe.FullName -Destination "$resources/SumatraPDF.exe" -Force
-          Get-Item "$resources/SumatraPDF.exe"
+          $out = "rust/src-tauri/resources/webview2-print-helper"
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          dotnet publish rust/webview2-print-helper/WebView2PrintHelper.csproj `
+            -c Release `
+            -r win-x64 `
+            --self-contained true `
+            -p:PublishSingleFile=true `
+            -p:PublishTrimmed=false `
+            -o $out
+          Get-ChildItem $out
 
       - name: Build Rust/Tauri app
         working-directory: rust
