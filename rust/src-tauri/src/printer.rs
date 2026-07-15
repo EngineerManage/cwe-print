@@ -26,6 +26,7 @@ const CREATE_NO_WINDOW: u32 = 0x08000000;
 #[serde(rename_all = "camelCase")]
 struct WebView2PrintRequest {
     source_path: String,
+    output_pdf_path: Option<String>,
     printer_name: Option<String>,
     copies: u32,
     page_width_mm: Option<f64>,
@@ -80,7 +81,17 @@ impl PrintEngine {
         if config.dry_run {
             let (html_path, pdf_path) = dry_run_paths(command)?;
             fs::write(&html_path, html).context("写入 dry-run HTML 文件失败")?;
-            render_html_to_pdf(&html_path, &pdf_path)?;
+
+            #[cfg(target_os = "windows")]
+            {
+                self.export_document_pdf_with_webview2(&html_path, &pdf_path, command, config)?;
+            }
+
+            #[cfg(not(target_os = "windows"))]
+            {
+                render_html_to_pdf(&html_path, &pdf_path)?;
+            }
+
             info!(
                 pdf = %pdf_path.display(),
                 "dry-run: 已生成 PDF，跳过真实打印"
@@ -206,7 +217,7 @@ impl PrintEngine {
         let helper = find_webview2_print_helper().ok_or_else(|| {
             anyhow::anyhow!("未找到 WebView2PrintHelper.exe，无法执行 Windows WebView2 静默打印")
         })?;
-        let request_path = write_webview2_print_request(path, command, config)?;
+        let request_path = write_webview2_print_request(path, None, command, config)?;
 
         let mut cmd = Command::new(helper);
         cmd.arg(&request_path);
@@ -214,6 +225,32 @@ impl PrintEngine {
             format!(
                 "WebView2 静默打印失败，文件: {}, 请求: {}",
                 path.display(),
+                request_path.display()
+            )
+        })
+    }
+
+    #[cfg(target_os = "windows")]
+    fn export_document_pdf_with_webview2(
+        &self,
+        source_path: &Path,
+        output_pdf_path: &Path,
+        command: &PrintCommand,
+        config: &AppConfig,
+    ) -> anyhow::Result<()> {
+        let helper = find_webview2_print_helper().ok_or_else(|| {
+            anyhow::anyhow!("未找到 WebView2PrintHelper.exe，无法执行 Windows WebView2 PDF 导出")
+        })?;
+        let request_path =
+            write_webview2_print_request(source_path, Some(output_pdf_path), command, config)?;
+
+        let mut cmd = Command::new(helper);
+        cmd.arg(&request_path);
+        run_print_command(cmd).with_context(|| {
+            format!(
+                "WebView2 PDF 导出失败，文件: {}, 输出: {}, 请求: {}",
+                source_path.display(),
+                output_pdf_path.display(),
                 request_path.display()
             )
         })
@@ -380,6 +417,7 @@ fn encode_url_path(path: &str) -> String {
 #[cfg(target_os = "windows")]
 fn write_webview2_print_request(
     path: &Path,
+    output_pdf_path: Option<&Path>,
     command: &PrintCommand,
     config: &AppConfig,
 ) -> anyhow::Result<PathBuf> {
@@ -400,6 +438,7 @@ fn write_webview2_print_request(
 
     let request = WebView2PrintRequest {
         source_path: path.canonicalize()?.display().to_string(),
+        output_pdf_path: output_pdf_path.map(|path| path.display().to_string()),
         printer_name: printer,
         copies,
         page_width_mm,

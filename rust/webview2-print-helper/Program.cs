@@ -7,6 +7,7 @@ namespace WebView2PrintHelper;
 internal sealed class PrintRequest
 {
     public string SourcePath { get; set; } = "";
+    public string? OutputPdfPath { get; set; }
     public string? PrinterName { get; set; }
     public int Copies { get; set; } = 1;
     public double? PageWidthMm { get; set; }
@@ -107,7 +108,14 @@ internal static class Program
 
                 await NavigateAsync(new Uri(source).AbsoluteUri);
                 await WaitForRenderReadyAsync();
-                await PrintAsync();
+                if (string.IsNullOrWhiteSpace(_request.OutputPdfPath))
+                {
+                    await PrintAsync();
+                }
+                else
+                {
+                    await PrintToPdfAsync(_request.OutputPdfPath);
+                }
 
                 ExitCode = Success;
             }
@@ -165,14 +173,40 @@ internal static class Program
         private async Task PrintAsync()
         {
             var settings = _webView.CoreWebView2.Environment.CreatePrintSettings();
-            settings.ShouldPrintBackgrounds = true;
-            settings.ShouldPrintHeaderAndFooter = false;
+            ApplyPrintSettings(settings);
             settings.Copies = Math.Max(1, _request.Copies);
 
             if (!string.IsNullOrWhiteSpace(_request.PrinterName))
             {
                 settings.PrinterName = _request.PrinterName;
             }
+
+            var status = await _webView.CoreWebView2.PrintAsync(settings);
+            if (status != CoreWebView2PrintStatus.Succeeded)
+            {
+                throw new InvalidOperationException($"WebView2 print failed: {status}");
+            }
+        }
+
+        private async Task PrintToPdfAsync(string outputPdfPath)
+        {
+            var settings = _webView.CoreWebView2.Environment.CreatePrintSettings();
+            ApplyPrintSettings(settings);
+
+            var output = Path.GetFullPath(outputPdfPath);
+            Directory.CreateDirectory(Path.GetDirectoryName(output)!);
+
+            var success = await _webView.CoreWebView2.PrintToPdfAsync(output, settings);
+            if (!success || !File.Exists(output))
+            {
+                throw new InvalidOperationException($"WebView2 PDF export failed: {output}");
+            }
+        }
+
+        private void ApplyPrintSettings(CoreWebView2PrintSettings settings)
+        {
+            settings.ShouldPrintBackgrounds = true;
+            settings.ShouldPrintHeaderAndFooter = false;
 
             if (_request.PageWidthMm is > 0 && _request.PageHeightMm is > 0)
             {
@@ -186,12 +220,6 @@ internal static class Program
                 settings.MarginRight = MmToInches(margins.Right);
                 settings.MarginBottom = MmToInches(margins.Bottom);
                 settings.MarginLeft = MmToInches(margins.Left);
-            }
-
-            var status = await _webView.CoreWebView2.PrintAsync(settings);
-            if (status != CoreWebView2PrintStatus.Succeeded)
-            {
-                throw new InvalidOperationException($"WebView2 print failed: {status}");
             }
         }
 
