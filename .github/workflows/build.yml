@@ -1,13 +1,14 @@
 name: Build & Release
 
 # 触发方式：
-#  1) 推送到 main / master 分支 → 构建 win+mac，并把安装包发布到 Releases
+#  1) 推送到 main / master / dev 分支 → 构建 win+mac，并把安装包发布到 Releases
 #  2) 手动在 Actions 页面点击 Run workflow → 同样构建并发布
 on:
   push:
     branches:
       - main
       - master
+      - dev
   workflow_dispatch:
 
 # 发布 Release 需要写权限
@@ -99,6 +100,17 @@ jobs:
       - name: Install dependencies
         working-directory: rust
         run: npm ci
+
+      - name: Verify Tauri icons
+        shell: bash
+        run: |
+          set -euo pipefail
+          ls -la rust/src-tauri/icons
+          test -f rust/src-tauri/icons/icon.ico
+          test -f rust/src-tauri/icons/icon.icns
+          test -f rust/src-tauri/icons/32x32.png
+          test -f rust/src-tauri/icons/128x128.png
+          test -f rust/src-tauri/icons/128x128@2x.png
 
       - name: Build Rust/Tauri app
         working-directory: rust
