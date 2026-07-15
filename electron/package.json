@@ -1,6 +1,6 @@
 {
   "name": "cwe-print",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "跨平台打印客户端，支持 Socket 指令打印",
   "main": "./out/main/index.js",
   "author": "cwe",

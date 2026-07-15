@@ -115,6 +115,7 @@ pub struct PrintTask {
     pub created_at: DateTime<Utc>,
     pub started_at: Option<DateTime<Utc>>,
     pub completed_at: Option<DateTime<Utc>>,
+    pub output_path: Option<String>,
     pub error: Option<String>,
 }
 
@@ -126,6 +127,7 @@ impl PrintTask {
             created_at: Utc::now(),
             started_at: None,
             completed_at: None,
+            output_path: None,
             error: None,
         }
     }
@@ -136,6 +138,8 @@ impl PrintTask {
 pub struct PrintResult {
     pub task_id: String,
     pub status: PrintTaskStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }

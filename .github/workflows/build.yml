@@ -112,6 +112,28 @@ jobs:
           test -f rust/src-tauri/icons/128x128.png
           test -f rust/src-tauri/icons/128x128@2x.png
 
+      - name: Download SumatraPDF for silent printing
+        if: matrix.platform == 'win'
+        shell: pwsh
+        run: |
+          $version = "3.6.1"
+          $url = "https://www.sumatrapdfreader.org/dl/rel/$version/SumatraPDF-$version-64.zip"
+          $resources = "rust/src-tauri/resources"
+          $zip = "$env:RUNNER_TEMP/SumatraPDF.zip"
+          $extract = "$env:RUNNER_TEMP/SumatraPDF"
+
+          New-Item -ItemType Directory -Force -Path $resources | Out-Null
+          Invoke-WebRequest -Uri $url -OutFile $zip
+          Expand-Archive -Path $zip -DestinationPath $extract -Force
+
+          $exe = Get-ChildItem -Path $extract -Recurse -Filter "SumatraPDF*.exe" | Select-Object -First 1
+          if (-not $exe) {
+            throw "SumatraPDF.exe not found after extracting $zip"
+          }
+
+          Copy-Item -Path $exe.FullName -Destination "$resources/SumatraPDF.exe" -Force
+          Get-Item "$resources/SumatraPDF.exe"
+
       - name: Build Rust/Tauri app
         working-directory: rust
         run: npm run tauri:build

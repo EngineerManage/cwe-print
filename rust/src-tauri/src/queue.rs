@@ -123,13 +123,19 @@ async fn worker(
         update_task(&state, &task);
 
         let result = match engine.print(&task).await {
-            Ok(()) => {
+            Ok(output_path) => {
                 task.status = PrintTaskStatus::Success;
                 task.completed_at = Some(Utc::now());
-                info!(task_id = %task_id, "打印任务成功");
+                task.output_path = output_path.clone();
+                if let Some(path) = &output_path {
+                    info!(task_id = %task_id, output_path = %path, "打印任务成功");
+                } else {
+                    info!(task_id = %task_id, "打印任务成功");
+                }
                 PrintResult {
                     task_id: task_id.clone(),
                     status: PrintTaskStatus::Success,
+                    output_path,
                     error: None,
                 }
             }
@@ -142,6 +148,7 @@ async fn worker(
                 PrintResult {
                     task_id: task_id.clone(),
                     status: PrintTaskStatus::Failed,
+                    output_path: None,
                     error: Some(error),
                 }
             }

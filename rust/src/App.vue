@@ -37,6 +37,7 @@ type PrintTask = {
   status: 'pending' | 'printing' | 'success' | 'failed'
   createdAt: string
   completedAt?: string
+  outputPath?: string
   error?: string
 }
 
@@ -99,12 +100,13 @@ const taskLogs = computed<LogEntry[]>(() => {
     const printer = task.printer || '系统默认打印机'
     const time = task.completedAt || task.createdAt
     const level: LogEntry['level'] = task.status === 'failed' ? 'error' : 'info'
+    const output = task.outputPath ? `，PDF: ${task.outputPath}` : ''
     const suffix = task.error ? `，错误: ${task.error}` : ''
     return {
       time,
       level,
       source: 'queue',
-      message: `${statusText(task.status)}: ${task.id}，格式: ${task.format}，打印机: ${printer}${suffix}`
+      message: `${statusText(task.status)}: ${task.id}，格式: ${task.format}，打印机: ${printer}${output}${suffix}`
     }
   })
 })
@@ -494,6 +496,9 @@ function sourceColor(source: string) {
                   <span>格式: {{ task.format }}</span>
                   <span>创建: {{ formatDateTime(task.createdAt) }}</span>
                   <span v-if="task.printer">打印机: {{ task.printer }}</span>
+                  <span v-if="task.outputPath" class="task-output" :title="task.outputPath">
+                    输出: {{ task.outputPath }}
+                  </span>
                 </div>
                 <div v-if="task.error" class="task-error">{{ task.error }}</div>
               </div>
@@ -1111,6 +1116,10 @@ input:checked + .slider::before {
   gap: 12px;
 }
 
+.task-row.meta {
+  flex-wrap: wrap;
+}
+
 .task-id {
   font-size: 13px;
   max-width: 300px;
@@ -1142,6 +1151,13 @@ input:checked + .slider::before {
 .task-error {
   font-size: 12px;
   color: #f56c6c;
+}
+
+.task-output {
+  max-width: 520px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .reprint-btn {
