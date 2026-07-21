@@ -59,6 +59,7 @@ export interface PrintTask {
   createdAt: string
   startedAt?: string
   completedAt?: string
+  outputPath?: string
   error?: string
 }
 

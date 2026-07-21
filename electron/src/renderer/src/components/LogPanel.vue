@@ -105,12 +105,13 @@ const taskLogs = computed<LogEntry[]>(() => {
     const printer = task.printer || '系统默认打印机'
     const time = task.completedAt || task.startedAt || task.createdAt
     const level = task.status === 'failed' ? 'error' : 'info'
+    const output = task.outputPath ? `，PDF: ${task.outputPath}` : ''
     const suffix = task.error ? `，错误: ${task.error}` : ''
     return {
       time,
       level,
       source: 'queue',
-      message: `${statusText(task.status)}: ${task.id}，格式: ${task.format}，打印机: ${printer}${suffix}`
+      message: `${statusText(task.status)}: ${task.id}，格式: ${task.format}，打印机: ${printer}${output}${suffix}`
     }
   })
 })

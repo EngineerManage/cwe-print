@@ -1,4 +1,9 @@
-import { BrowserWindow } from 'electron'
+import { app, BrowserWindow } from 'electron'
+import type { PrintToPDFOptions } from 'electron'
+import { execFile } from 'child_process'
+import { existsSync } from 'fs'
+import fs from 'fs/promises'
+import path from 'path'
 import { logger } from '../utils/logger'
 import { configManager } from '../utils/config'
 import { printQueue } from './queue'
@@ -6,7 +11,7 @@ import type { PrintTask } from './queue'
 import type { PrintCommand, PrintBlock } from '../socket/tcp-server'
 import { getPaperDimensions, toElectronPageSize, DEFAULT_MARGINS } from './paper-sizes'
 
-export async function handlePrintCommand(cmd: PrintCommand): Promise<{ taskId: string; status: string; error?: string }> {
+export async function handlePrintCommand(cmd: PrintCommand): Promise<{ taskId: string; status: string; outputPath?: string; error?: string }> {
   const task = printQueue.enqueue(cmd)
 
   // 触发队列处理（异步）
@@ -14,7 +19,7 @@ export async function handlePrintCommand(cmd: PrintCommand): Promise<{ taskId: s
 
   await waitForTaskDone(task.id)
 
-  return { taskId: task.id, status: task.status, error: task.error }
+  return { taskId: task.id, status: task.status, outputPath: task.outputPath, error: task.error }
 }
 
 function waitForTaskDone(taskId: string): Promise<void> {
@@ -39,30 +44,30 @@ async function processQueue(): Promise<void> {
   await printQueue.process(async (task) => {
     switch (task.format) {
       case 'pdf':
-        await printPdf(task)
-        break
+        return printPdf(task)
       case 'html':
-        await printHtml(task)
-        break
+        return printHtml(task)
       case 'image':
-        await printImage(task)
-        break
+        return printImage(task)
       case 'escpos':
-        await printEscpos(task)
-        break
+        return printEscpos(task)
       default:
         throw new Error(`不支持的打印格式: ${task.format}`)
     }
   })
 }
 
-async function printPdf(task: PrintTask): Promise<void> {
+async function printPdf(task: PrintTask): Promise<string> {
   logger.info(`开始打印 PDF: ${task.id}, 纸张: ${formatPaperSize(task.paperSize)}`, 'engine')
-  // TODO: 实现 PDF 打印逻辑
-  await simulatePrint(task, 1000)
+  const pdfPath = task.content
+  if (!pdfPath || !existsSync(pdfPath)) {
+    throw new Error(`PDF 文件不存在: ${pdfPath || '(空)'}`)
+  }
+  await printPdfFile(pdfPath, task)
+  return pdfPath
 }
 
-async function printHtml(task: PrintTask): Promise<void> {
+async function printHtml(task: PrintTask): Promise<string> {
   logger.info(`开始打印 HTML: ${task.id}, 纸张: ${formatPaperSize(task.paperSize)}`, 'engine')
 
   const win = new BrowserWindow({
@@ -82,21 +87,14 @@ async function printHtml(task: PrintTask): Promise<void> {
 
     await waitForRenderReady(win)
 
-    // 构建 Electron print 选项
-    const printOptions = buildElectronPrintOptions(task)
+    const pdfPath = await createPdfOutputPath(task)
+    const pdfOptions = buildElectronPdfOptions(task)
+    const pdf = await win.webContents.printToPDF(pdfOptions)
+    await fs.writeFile(pdfPath, pdf)
+    logger.info(`HTML 已转换为 PDF: ${pdfPath}`, 'engine')
 
-    await new Promise<void>((resolve, reject) => {
-      win.webContents.print(
-        printOptions,
-        (success, errorType) => {
-          if (success) {
-            resolve()
-          } else {
-            reject(new Error(`打印失败: ${errorType}`))
-          }
-        }
-      )
-    })
+    await printPdfFile(pdfPath, task)
+    return pdfPath
   } finally {
     win.destroy()
   }
@@ -117,7 +115,7 @@ async function waitForRenderReady(win: BrowserWindow): Promise<void> {
   `)
 }
 
-async function printImage(task: PrintTask): Promise<void> {
+async function printImage(task: PrintTask): Promise<string> {
   logger.info(`开始打印图片: ${task.id}, 纸张: ${formatPaperSize(task.paperSize)}`, 'engine')
 
   const blocks: PrintBlock[] = task.blocks ?? []
@@ -136,7 +134,7 @@ async function printImage(task: PrintTask): Promise<void> {
     })
   }
 
-  await printHtml({
+  return printHtml({
     ...task,
     format: 'html',
     content: '',
@@ -153,6 +151,74 @@ async function printEscpos(task: PrintTask): Promise<void> {
 async function simulatePrint(task: PrintTask, ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms))
   logger.info(`模拟打印完成: ${task.id}`, 'engine')
+}
+
+async function printPdfFile(pdfPath: string, task: PrintTask): Promise<void> {
+  if (process.platform === 'darwin' || process.platform === 'linux') {
+    await printPdfWithLp(pdfPath, task)
+    return
+  }
+
+  if (process.platform === 'win32') {
+    await printPdfWithElectron(pdfPath, task)
+    return
+  }
+
+  throw new Error(`当前系统暂不支持 PDF 打印: ${process.platform}`)
+}
+
+async function printPdfWithLp(pdfPath: string, task: PrintTask): Promise<void> {
+  const printer = task.printer || configManager.get().defaultPrinter || ''
+  const copies = String(task.copies || 1)
+  const args: string[] = []
+
+  if (printer) {
+    args.push('-d', printer)
+  }
+
+  args.push('-n', copies, pdfPath)
+  await execFileAsync('lp', args)
+}
+
+async function printPdfWithElectron(pdfPath: string, task: PrintTask): Promise<void> {
+  const win = new BrowserWindow({
+    width: 800,
+    height: 600,
+    show: false,
+    webPreferences: {
+      offscreen: true
+    }
+  })
+
+  try {
+    await win.loadFile(pdfPath)
+    await waitForRenderReady(win)
+
+    await new Promise<void>((resolve, reject) => {
+      win.webContents.print(buildElectronPrintOptions(task), (success, errorType) => {
+        if (success) {
+          resolve()
+        } else {
+          reject(new Error(`PDF 打印失败: ${errorType}`))
+        }
+      })
+    })
+  } finally {
+    win.destroy()
+  }
+}
+
+function execFileAsync(file: string, args: string[]): Promise<void> {
+  return new Promise((resolve, reject) => {
+    execFile(file, args, (error, stdout, stderr) => {
+      if (error) {
+        const message = stderr.trim() || stdout.trim() || error.message
+        reject(new Error(`系统打印命令失败: ${message}`))
+        return
+      }
+      resolve()
+    })
+  })
 }
 
 // ========== 辅助函数 ==========
@@ -260,6 +326,65 @@ function buildElectronPrintOptions(task: PrintTask): Record<string, unknown> {
   Object.assign(options, task.options || {})
 
   return options
+}
+
+function buildElectronPdfOptions(task: PrintTask): PrintToPDFOptions {
+  const options: PrintToPDFOptions = {
+    printBackground: true,
+    preferCSSPageSize: true
+  }
+
+  if (task.paperSize) {
+    options.pageSize = toElectronPdfPageSize(task.paperSize)
+  }
+
+  if (task.margins) {
+    options.margins = {
+      marginType: 'custom',
+      top: mmToPixels(task.margins.top),
+      bottom: mmToPixels(task.margins.bottom),
+      left: mmToPixels(task.margins.left),
+      right: mmToPixels(task.margins.right)
+    }
+  }
+
+  return options
+}
+
+function toElectronPdfPageSize(paperSize: PrintCommand['paperSize']): PrintToPDFOptions['pageSize'] {
+  if (!paperSize) return undefined
+  if (typeof paperSize === 'string' && ['A3', 'A4', 'A5', 'A6', 'Letter', 'Legal', 'Tabloid'].includes(paperSize)) {
+    return paperSize as PrintToPDFOptions['pageSize']
+  }
+
+  const dim = getPaperDimensions(paperSize)
+  return {
+    width: dim.width / 25.4,
+    height: dim.height / 25.4
+  }
+}
+
+function mmToPixels(value: number): number {
+  return Math.round((value / 25.4) * 96)
+}
+
+async function createPdfOutputPath(task: PrintTask): Promise<string> {
+  const dir = path.join(app.getPath('userData'), 'generated-pdf')
+  await fs.mkdir(dir, { recursive: true })
+
+  const timestamp = Date.now()
+  const taskId = sanitizeFilename(task.id)
+  return path.join(dir, `${timestamp}-${taskId}.pdf`)
+}
+
+function sanitizeFilename(value: string): string {
+  const sanitized = value
+    .split('')
+    .map((char) => (/^[a-zA-Z0-9._-]$/.test(char) ? char : '_'))
+    .join('')
+    .slice(0, 80)
+
+  return sanitized || 'task'
 }
 
 /**

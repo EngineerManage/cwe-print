@@ -24,6 +24,14 @@ use tracing_subscriber::{EnvFilter, fmt};
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
+const PRINTER_STATUS_READY: i32 = 0;
+const PRINTER_STATUS_UNKNOWN: i32 = 2;
+const PRINTER_STATUS_PRINTING: i32 = 4;
+#[cfg(target_os = "windows")]
+const PRINTER_STATUS_WARMUP: i32 = 5;
+const PRINTER_STATUS_STOPPED: i32 = 6;
+const PRINTER_STATUS_OFFLINE: i32 = 7;
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct PrinterInfo {
@@ -245,7 +253,8 @@ fn list_system_printers() -> anyhow::Result<Vec<PrinterInfo>> {
                 status: item
                     .get("PrinterStatus")
                     .and_then(serde_json::Value::as_i64)
-                    .unwrap_or(0) as i32,
+                    .map(normalize_windows_printer_status)
+                    .unwrap_or(PRINTER_STATUS_UNKNOWN),
                 is_default: item
                     .get("Default")
                     .and_then(serde_json::Value::as_bool)
@@ -254,6 +263,18 @@ fn list_system_printers() -> anyhow::Result<Vec<PrinterInfo>> {
             })
         })
         .collect())
+}
+
+#[cfg(target_os = "windows")]
+fn normalize_windows_printer_status(status: i64) -> i32 {
+    match status {
+        3 => PRINTER_STATUS_READY,
+        4 => PRINTER_STATUS_PRINTING,
+        5 => PRINTER_STATUS_WARMUP,
+        6 => PRINTER_STATUS_STOPPED,
+        7 => PRINTER_STATUS_OFFLINE,
+        _ => PRINTER_STATUS_UNKNOWN,
+    }
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -278,10 +299,16 @@ fn list_system_printers() -> anyhow::Result<Vec<PrinterInfo>> {
             Some(PrinterInfo {
                 name: name.to_string(),
                 description: line.to_string(),
-                status: if line.contains(" is idle") || line.contains(" now printing") {
-                    0
+                status: if line.contains(" is idle") {
+                    PRINTER_STATUS_READY
+                } else if line.contains(" now printing") {
+                    PRINTER_STATUS_PRINTING
+                } else if line.contains(" disabled") {
+                    PRINTER_STATUS_STOPPED
+                } else if line.contains(" offline") {
+                    PRINTER_STATUS_OFFLINE
                 } else {
-                    1
+                    PRINTER_STATUS_UNKNOWN
                 },
                 is_default: default_name == Some(name),
             })

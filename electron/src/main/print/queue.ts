@@ -7,6 +7,7 @@ export interface PrintTask extends PrintCommand {
   createdAt: string
   startedAt?: string
   completedAt?: string
+  outputPath?: string
   error?: string
 }
 
@@ -40,7 +41,7 @@ class PrintQueue extends EventEmitter {
     return task
   }
 
-  async process(handler: (task: PrintTask) => Promise<void>): Promise<void> {
+  async process(handler: (task: PrintTask) => Promise<string | void>): Promise<void> {
     if (this.active) return
     this.active = true
 
@@ -54,7 +55,10 @@ class PrintQueue extends EventEmitter {
       this.emit('changed')
 
       try {
-        await handler(task)
+        const outputPath = await handler(task)
+        if (outputPath) {
+          task.outputPath = outputPath
+        }
         task.status = 'success'
         task.completedAt = new Date().toISOString()
         logger.info(`打印任务成功: ${task.id}`, 'queue')

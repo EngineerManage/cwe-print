@@ -27,6 +27,39 @@ onMounted(async () => {
 onUnmounted(() => {
   unbindStatus?.()
 })
+
+function printerStatusText(value: number) {
+  switch (value) {
+    case 0:
+      return '就绪'
+    case 4:
+      return '打印中'
+    case 5:
+      return '预热中'
+    case 6:
+      return '已停止'
+    case 7:
+      return '离线'
+    default:
+      return '未知'
+  }
+}
+
+function printerStatusClass(value: number) {
+  switch (value) {
+    case 0:
+      return 'ready'
+    case 4:
+      return 'printing'
+    case 5:
+      return 'warming'
+    case 6:
+    case 7:
+      return 'offline'
+    default:
+      return 'unknown'
+  }
+}
 </script>
 
 <template>
@@ -113,8 +146,8 @@ onUnmounted(() => {
         </div>
         <div class="printer-desc">{{ printer.description || '系统打印机' }}</div>
         <div class="printer-status">
-          <span :class="['status-dot', printer.status === 0 ? 'ready' : 'offline']" />
-          {{ printer.status === 0 ? '就绪' : '离线' }}
+          <span :class="['status-dot', printerStatusClass(printer.status)]" />
+          {{ printerStatusText(printer.status) }}
         </div>
       </div>
     </div>
@@ -329,7 +362,19 @@ onUnmounted(() => {
   background: #67c23a;
 }
 
+.status-dot.printing {
+  background: #409eff;
+}
+
+.status-dot.warming {
+  background: #e6a23c;
+}
+
 .status-dot.offline {
+  background: #f56c6c;
+}
+
+.status-dot.unknown {
   background: #c0c4cc;
 }
 </style>
