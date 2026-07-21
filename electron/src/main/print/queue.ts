@@ -45,35 +45,38 @@ class PrintQueue extends EventEmitter {
     if (this.active) return
     this.active = true
 
-    while (true) {
-      const task = this.queue.find((t) => t.status === 'pending')
-      if (!task) break
+    try {
+      while (true) {
+        const task = this.queue.find((t) => t.status === 'pending')
+        if (!task) break
 
-      this.currentTask = task
-      task.status = 'printing'
-      task.startedAt = new Date().toISOString()
-      this.emit('changed')
+        this.currentTask = task
+        task.status = 'printing'
+        task.startedAt = new Date().toISOString()
+        this.emit('changed')
 
-      try {
-        const outputPath = await handler(task)
-        if (outputPath) {
-          task.outputPath = outputPath
+        try {
+          const outputPath = await handler(task)
+          if (outputPath) {
+            task.outputPath = outputPath
+          }
+          task.status = 'success'
+          task.completedAt = new Date().toISOString()
+          logger.info(`打印任务成功: ${task.id}`, 'queue')
+        } catch (err) {
+          task.status = 'failed'
+          task.error = (err as Error).message
+          task.completedAt = new Date().toISOString()
+          logger.error(`打印任务失败: ${task.id}, ${task.error}`, 'queue')
+        } finally {
+          this.currentTask = null
+          this.emit('changed')
         }
-        task.status = 'success'
-        task.completedAt = new Date().toISOString()
-        logger.info(`打印任务成功: ${task.id}`, 'queue')
-      } catch (err) {
-        task.status = 'failed'
-        task.error = (err as Error).message
-        task.completedAt = new Date().toISOString()
-        logger.error(`打印任务失败: ${task.id}, ${task.error}`, 'queue')
       }
-
+    } finally {
       this.currentTask = null
-      this.emit('changed')
+      this.active = false
     }
-
-    this.active = false
   }
 
   clear(): void {

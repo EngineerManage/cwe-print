@@ -15,16 +15,17 @@ export async function handlePrintCommand(cmd: PrintCommand): Promise<{ taskId: s
   const task = printQueue.enqueue(cmd)
 
   // 触发队列处理（异步）
-  processQueue()
+  processQueue().catch((err) => {
+    logger.error(`打印队列处理异常: ${(err as Error).message}`, 'queue')
+  })
 
-  await waitForTaskDone(task.id)
+  await waitForTaskDone(task)
 
   return { taskId: task.id, status: task.status, outputPath: task.outputPath, error: task.error }
 }
 
-function waitForTaskDone(taskId: string): Promise<void> {
+function waitForTaskDone(task: PrintTask): Promise<void> {
   const isDone = (): boolean => {
-    const task = printQueue.all.find((item) => item.id === taskId)
     return task?.status === 'success' || task?.status === 'failed'
   }
 
@@ -176,7 +177,9 @@ async function printPdfWithLp(pdfPath: string, task: PrintTask): Promise<void> {
     args.push('-d', printer)
   }
 
-  args.push('-n', copies, pdfPath)
+  args.push('-n', copies)
+  appendCupsPdfOptions(args, task)
+  args.push(pdfPath)
   await execFileAsync('lp', args)
 }
 
@@ -219,6 +222,43 @@ function execFileAsync(file: string, args: string[]): Promise<void> {
       resolve()
     })
   })
+}
+
+function appendCupsPdfOptions(args: string[], task: PrintTask): void {
+  args.push(
+    '-o',
+    'print-scaling=none',
+    '-o',
+    'fit-to-page=false',
+    '-o',
+    'scaling=100',
+    '-o',
+    'natural-scaling=100',
+    '-o',
+    'page-left=0',
+    '-o',
+    'page-right=0',
+    '-o',
+    'page-top=0',
+    '-o',
+    'page-bottom=0',
+    '-o',
+    'position=center'
+  )
+
+  if (!task.paperSize) return
+
+  const dim = getPaperDimensions(task.paperSize)
+  args.push('-o', `media=${toCupsMedia(task.paperSize)}`)
+  args.push('-o', `orientation-requested=${dim.width > dim.height ? 4 : 3}`)
+}
+
+function toCupsMedia(paperSize: PrintCommand['paperSize']): string {
+  if (!paperSize) return 'A4'
+  if (typeof paperSize === 'string') return paperSize
+
+  const dim = getPaperDimensions(paperSize)
+  return `Custom.${dim.width}x${dim.height}mm`
 }
 
 // ========== 辅助函数 ==========
