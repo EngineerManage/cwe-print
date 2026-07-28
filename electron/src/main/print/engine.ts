@@ -94,7 +94,7 @@ async function printHtml(task: PrintTask): Promise<string> {
     await fs.writeFile(pdfPath, pdf)
     logger.info(`HTML 已转换为 PDF: ${pdfPath}`, 'engine')
 
-    await printPdfFile(pdfPath, task)
+    await printBrowserWindow(win, task, 'HTML')
     return pdfPath
   } finally {
     win.destroy()
@@ -211,6 +211,18 @@ async function printPdfWithElectron(pdfPath: string, task: PrintTask): Promise<v
   }
 }
 
+async function printBrowserWindow(win: BrowserWindow, task: PrintTask, sourceLabel: string): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    win.webContents.print(buildElectronPrintOptions(task), (success, errorType) => {
+      if (success) {
+        resolve()
+      } else {
+        reject(new Error(`${sourceLabel} 鎵撳嵃澶辫触: ${errorType}`))
+      }
+    })
+  })
+}
+
 function execFileAsync(file: string, args: string[]): Promise<void> {
   return new Promise((resolve, reject) => {
     execFile(file, args, (error, stdout, stderr) => {
@@ -268,7 +280,7 @@ function toCupsMedia(paperSize: PrintCommand['paperSize']): string {
  */
 function buildPrintHtml(task: PrintTask): string {
   const paperSize = task.paperSize
-  const margins = task.margins ?? DEFAULT_MARGINS
+  const margins = getEffectiveMargins(task)
 
   let paperCss = ''
   let bodyCss = ''
@@ -352,14 +364,13 @@ function buildElectronPrintOptions(task: PrintTask): Record<string, unknown> {
     options.pageSize = toElectronPageSize(task.paperSize)
   }
 
-  if (task.margins) {
-    options.margins = {
-      marginType: 'custom',
-      top: task.margins.top,
-      bottom: task.margins.bottom,
-      left: task.margins.left,
-      right: task.margins.right
-    }
+  const margins = getEffectiveMargins(task)
+  options.margins = {
+    marginType: 'custom',
+    top: mmToPixels(margins.top),
+    bottom: mmToPixels(margins.bottom),
+    left: mmToPixels(margins.left),
+    right: mmToPixels(margins.right)
   }
 
   // 合并用户额外选项（优先级最高，可覆盖）
@@ -371,21 +382,20 @@ function buildElectronPrintOptions(task: PrintTask): Record<string, unknown> {
 function buildElectronPdfOptions(task: PrintTask): PrintToPDFOptions {
   const options: PrintToPDFOptions = {
     printBackground: true,
-    preferCSSPageSize: true
+    preferCSSPageSize: true,
+    scale: 1
   }
 
   if (task.paperSize) {
     options.pageSize = toElectronPdfPageSize(task.paperSize)
   }
 
-  if (task.margins) {
-    options.margins = {
-      marginType: 'custom',
-      top: mmToPixels(task.margins.top),
-      bottom: mmToPixels(task.margins.bottom),
-      left: mmToPixels(task.margins.left),
-      right: mmToPixels(task.margins.right)
-    }
+  const margins = getEffectiveMargins(task)
+  options.margins = {
+    top: mmToInches(margins.top),
+    bottom: mmToInches(margins.bottom),
+    left: mmToInches(margins.left),
+    right: mmToInches(margins.right)
   }
 
   return options
@@ -406,6 +416,16 @@ function toElectronPdfPageSize(paperSize: PrintCommand['paperSize']): PrintToPDF
 
 function mmToPixels(value: number): number {
   return Math.round((value / 25.4) * 96)
+}
+
+function mmToInches(value: number): number {
+  return value / 25.4
+}
+
+function getEffectiveMargins(task: PrintTask): NonNullable<PrintCommand['margins']> {
+  if (task.margins) return task.margins
+
+  return DEFAULT_MARGINS
 }
 
 async function createPdfOutputPath(task: PrintTask): Promise<string> {
