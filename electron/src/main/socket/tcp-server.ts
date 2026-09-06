@@ -31,7 +31,7 @@ export interface PrintBlock {
 export interface PrintCommand {
   id: string
   type: 'print'
-  format: 'pdf' | 'html' | 'image' | 'escpos'
+  format: 'pdf' | 'html' | 'image' | 'escpos' | 'ecpay'
   content: string
   printer?: string
   copies?: number

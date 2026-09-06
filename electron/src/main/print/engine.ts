@@ -52,6 +52,8 @@ async function processQueue(): Promise<void> {
         return printImage(task)
       case 'escpos':
         return printEscpos(task)
+      case 'ecpay':
+        return printEcpay(task)
       default:
         throw new Error(`不支持的打印格式: ${task.format}`)
     }
@@ -116,6 +118,27 @@ async function waitForRenderReady(win: BrowserWindow): Promise<void> {
   `)
 }
 
+async function waitForSelector(win: BrowserWindow, selector: string, timeoutMs = 10000): Promise<void> {
+  await win.webContents.executeJavaScript(`
+    new Promise((resolve, reject) => {
+      const selector = ${JSON.stringify(selector)};
+      const start = Date.now();
+      const tick = () => {
+        if (document.querySelector(selector)) {
+          resolve(true);
+          return;
+        }
+        if (Date.now() - start > ${timeoutMs}) {
+          reject(new Error('等待节点超时: ' + selector));
+          return;
+        }
+        setTimeout(tick, 100);
+      };
+      tick();
+    })
+  `)
+}
+
 async function printImage(task: PrintTask): Promise<string> {
   logger.info(`开始打印图片: ${task.id}, 纸张: ${formatPaperSize(task.paperSize)}`, 'engine')
 
@@ -147,6 +170,93 @@ async function printEscpos(task: PrintTask): Promise<void> {
   logger.info(`开始打印 ESC/POS: ${task.id}`, 'engine')
   // TODO: 通过 serialport/usb 直写小票机
   await simulatePrint(task, 500)
+}
+
+async function printEcpay(task: PrintTask): Promise<string> {
+  const url = task.content.trim()
+  logger.info(`开始打印绿界发票: ${task.id}, URL: ${url}`, 'engine')
+
+  if (!url) {
+    throw new Error('绿界发票打印 URL 不能为空')
+  }
+
+  const win = new BrowserWindow({
+    width: 800,
+    height: 1200,
+    show: false,
+    webPreferences: {
+      offscreen: true
+    }
+  })
+
+  try {
+    await win.loadURL(url)
+    await waitForRenderReady(win)
+    await waitForSelector(win, '.invoice_inner')
+    const rect = await win.webContents.executeJavaScript(`
+      (() => {
+        const invoice = document.querySelector('.invoice_inner')
+        if (!invoice) {
+          throw new Error('未找到 .invoice_inner')
+        }
+
+        const rect = invoice.getBoundingClientRect()
+        return {
+          x: Math.floor(rect.left),
+          y: Math.floor(rect.top),
+          width: Math.ceil(rect.width),
+          height: Math.ceil(rect.height)
+        }
+      })()
+    `) as { x: number; y: number; width: number; height: number }
+    const image = await win.webContents.capturePage(rect)
+    const imageDataUrl = image.toDataURL()
+    const htmlTask: PrintTask = {
+      ...task,
+      format: 'html',
+      content: '',
+      paperSize: task.paperSize ?? {
+        width: pxToMm(rect.width),
+        height: pxToMm(rect.height),
+        unit: 'mm'
+      },
+      margins: task.margins ?? { top: 0, left: 0, right: 0, bottom: 0 }
+    }
+
+    return printHtml({
+      ...htmlTask,
+      blocks: [
+        {
+          content: buildEcpayImageHtml(imageDataUrl, htmlTask),
+          position: htmlTask.position ?? { top: 0, left: 0 }
+        }
+      ]
+    })
+  } finally {
+    win.destroy()
+  }
+}
+
+function buildEcpayImageHtml(imageDataUrl: string, task: PrintTask): string {
+  const box = getEcpayPrintBox(task)
+
+  return `<div style="width:${box.width};height:${box.height};overflow:hidden;"><img src="${imageDataUrl}" style="display:block;width:100%;height:100%;object-fit:contain;object-position:top left;" /></div>`
+}
+
+function getEcpayPrintBox(task: PrintTask): { width: string; height: string } {
+  if (!task.paperSize) {
+    return { width: 'auto', height: 'auto' }
+  }
+
+  const margins = task.margins ?? DEFAULT_MARGINS
+  const dim = getPaperDimensions(task.paperSize)
+  const widthMm = Math.max(1, dim.width - margins.left - margins.right)
+  const heightMm = Math.max(1, dim.height - margins.top - margins.bottom)
+  return { width: `${widthMm}mm`, height: `${heightMm}mm` }
+}
+
+function pxToMm(value: number): number {
+  return Number(((value / 96) * 25.4).toFixed(2))
 }
 
 async function simulatePrint(task: PrintTask, ms: number): Promise<void> {

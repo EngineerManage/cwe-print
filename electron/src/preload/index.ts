@@ -46,7 +46,7 @@ export interface PrinterInfo {
 export interface PrintTask {
   id: string
   type: 'print'
-  format: 'pdf' | 'html' | 'image' | 'escpos'
+  format: 'pdf' | 'html' | 'image' | 'escpos' | 'ecpay'
   content: string
   printer?: string
   copies?: number
