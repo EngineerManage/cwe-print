@@ -87,4 +87,4 @@ export function getSupportedPaperSizes(): Array<{ key: string; name: string; wid
 /**
  * 默认边距（单位 mm）
  */
-export const DEFAULT_MARGINS = { top: 10, left: 10, right: 10, bottom: 10 }
+export const DEFAULT_MARGINS = { top: 0, left: 0, right: 0, bottom: 0 }
