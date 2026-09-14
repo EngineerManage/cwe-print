@@ -11,6 +11,9 @@ import type { PrintTask } from './queue'
 import type { PrintCommand, PrintBlock } from '../socket/tcp-server'
 import { getPaperDimensions, toElectronPageSize, DEFAULT_MARGINS } from './paper-sizes'
 
+const ECPAY_CAPTURE_DPI = 300
+const ECPAY_MAX_CAPTURE_SCALE = 4
+
 export async function handlePrintCommand(cmd: PrintCommand): Promise<{ taskId: string; status: string; outputPath?: string; error?: string }> {
   const task = printQueue.enqueue(cmd)
 
@@ -96,7 +99,7 @@ async function printHtml(task: PrintTask): Promise<string> {
     await fs.writeFile(pdfPath, pdf)
     logger.info(`HTML 已转换为 PDF: ${pdfPath}`, 'engine')
 
-    await printBrowserWindow(win, task, 'HTML')
+    await printPdfFile(pdfPath, task)
     return pdfPath
   } finally {
     win.destroy()
@@ -193,7 +196,7 @@ async function printEcpay(task: PrintTask): Promise<string> {
     await win.loadURL(url)
     await waitForRenderReady(win)
     await waitForSelector(win, '.invoice_inner')
-    const rect = await win.webContents.executeJavaScript(`
+    const measuredRect = await win.webContents.executeJavaScript(`
       (() => {
         const invoice = document.querySelector('.invoice_inner')
         if (!invoice) {
@@ -209,19 +212,44 @@ async function printEcpay(task: PrintTask): Promise<string> {
         }
       })()
     `) as { x: number; y: number; width: number; height: number }
-    const image = await win.webContents.capturePage(rect)
-    const imageDataUrl = image.toDataURL()
     const htmlTask: PrintTask = {
       ...task,
       format: 'html',
       content: '',
       paperSize: task.paperSize ?? {
-        width: pxToMm(rect.width),
-        height: pxToMm(rect.height),
+        width: pxToMm(measuredRect.width),
+        height: pxToMm(measuredRect.height),
         unit: 'mm'
       },
       margins: task.margins ?? { top: 0, left: 0, right: 0, bottom: 0 }
     }
+    const captureScale = getEcpayCaptureScale(htmlTask, measuredRect)
+    const captureRect = await win.webContents.executeJavaScript(`
+      (() => {
+        const invoice = document.querySelector('.invoice_inner')
+        if (!invoice) {
+          throw new Error('未找到 .invoice_inner')
+        }
+
+        invoice.style.transformOrigin = 'top left'
+        invoice.style.transform = 'scale(${captureScale})'
+
+        const rect = invoice.getBoundingClientRect()
+        return {
+          x: Math.floor(rect.left),
+          y: Math.floor(rect.top),
+          width: Math.ceil(rect.width),
+          height: Math.ceil(rect.height)
+        }
+      })()
+    `) as { x: number; y: number; width: number; height: number }
+    const image = await win.webContents.capturePage(captureRect)
+    const imageDataUrl = image.toDataURL()
+    const imageSize = image.getSize()
+    logger.info(
+      `绿界发票截图完成: ${measuredRect.width}x${measuredRect.height}, scale=${captureScale}, image=${imageSize.width}x${imageSize.height}`,
+      'engine'
+    )
 
     return printHtml({
       ...htmlTask,
@@ -253,6 +281,23 @@ function getEcpayPrintBox(task: PrintTask): { width: string; height: string } {
   const widthMm = Math.max(1, dim.width - margins.left - margins.right)
   const heightMm = Math.max(1, dim.height - margins.top - margins.bottom)
   return { width: `${widthMm}mm`, height: `${heightMm}mm` }
+}
+
+function getEcpayCaptureScale(task: PrintTask, rect: { width: number; height: number }): number {
+  const margins = task.margins ?? DEFAULT_MARGINS
+  const dim = task.paperSize
+    ? getPaperDimensions(task.paperSize)
+    : { width: pxToMm(rect.width), height: pxToMm(rect.height) }
+  const printableWidthMm = Math.max(1, dim.width - margins.left - margins.right)
+  const printableHeightMm = Math.max(1, dim.height - margins.top - margins.bottom)
+  const widthScale = printableWidthMm / pxToMm(rect.width)
+  const heightScale = printableHeightMm / pxToMm(rect.height)
+  const printScale = Math.min(widthScale, heightScale)
+  const targetPixelWidth = (pxToMm(rect.width) * printScale / 25.4) * ECPAY_CAPTURE_DPI
+  const targetPixelHeight = (pxToMm(rect.height) * printScale / 25.4) * ECPAY_CAPTURE_DPI
+  const scale = Math.max(targetPixelWidth / rect.width, targetPixelHeight / rect.height, 1)
+
+  return Math.min(ECPAY_MAX_CAPTURE_SCALE, Number(scale.toFixed(2)))
 }
 
 function pxToMm(value: number): number {
@@ -294,6 +339,7 @@ async function printPdfWithLp(pdfPath: string, task: PrintTask): Promise<void> {
 }
 
 async function printPdfWithElectron(pdfPath: string, task: PrintTask): Promise<void> {
+  const printer = task.printer || configManager.get().defaultPrinter || ''
   const win = new BrowserWindow({
     width: 800,
     height: 600,
@@ -308,8 +354,11 @@ async function printPdfWithElectron(pdfPath: string, task: PrintTask): Promise<v
     await waitForRenderReady(win)
 
     await new Promise<void>((resolve, reject) => {
-      win.webContents.print(buildElectronPrintOptions(task), (success, errorType) => {
+      const options = buildElectronPrintOptions(task)
+      logger.info(`提交 PDF 到 Windows 打印: ${pdfPath}, 打印机: ${printer || '系统默认打印机'}`, 'engine')
+      win.webContents.print(options, (success, errorType) => {
         if (success) {
+          logger.info(`Windows 打印任务已提交: ${task.id}`, 'engine')
           resolve()
         } else {
           reject(new Error(`PDF 打印失败: ${errorType}`))
@@ -463,11 +512,15 @@ ${blocksHtml}
  * 构建 Electron webContents.print() 选项
  */
 function buildElectronPrintOptions(task: PrintTask): Record<string, unknown> {
+  const printer = task.printer || configManager.get().defaultPrinter || ''
   const options: Record<string, unknown> = {
     silent: true,
     printBackground: true,
-    deviceName: task.printer || configManager.get().defaultPrinter || '',
     copies: task.copies || 1
+  }
+
+  if (printer) {
+    options.deviceName = printer
   }
 
   if (task.paperSize) {
