@@ -11,8 +11,7 @@ import type { PrintTask } from './queue'
 import type { PrintCommand, PrintBlock } from '../socket/tcp-server'
 import { getPaperDimensions, toElectronPageSize, DEFAULT_MARGINS } from './paper-sizes'
 
-const ECPAY_CAPTURE_DPI = 300
-const ECPAY_MAX_CAPTURE_SCALE = 4
+const ECPAY_ZERO_MARGINS = { top: 0, left: 0, right: 0, bottom: 0 }
 
 export async function handlePrintCommand(cmd: PrintCommand): Promise<{ taskId: string; status: string; outputPath?: string; error?: string }> {
   const task = printQueue.enqueue(cmd)
@@ -212,92 +211,103 @@ async function printEcpay(task: PrintTask): Promise<string> {
         }
       })()
     `) as { x: number; y: number; width: number; height: number }
-    const htmlTask: PrintTask = {
+    const imagePageSize = {
+      width: pxToMm(measuredRect.width),
+      height: pxToMm(measuredRect.height),
+      unit: 'mm' as const
+    }
+    const imageTask: PrintTask = {
       ...task,
       format: 'html',
       content: '',
-      paperSize: task.paperSize ?? {
-        width: pxToMm(measuredRect.width),
-        height: pxToMm(measuredRect.height),
-        unit: 'mm'
-      },
-      margins: task.margins ?? { top: 0, left: 0, right: 0, bottom: 0 }
+      paperSize: imagePageSize,
+      margins: ECPAY_ZERO_MARGINS
     }
-    const captureScale = getEcpayCaptureScale(htmlTask, measuredRect)
-    const captureRect = await win.webContents.executeJavaScript(`
-      (() => {
-        const invoice = document.querySelector('.invoice_inner')
-        if (!invoice) {
-          throw new Error('未找到 .invoice_inner')
-        }
-
-        invoice.style.transformOrigin = 'top left'
-        invoice.style.transform = 'scale(${captureScale})'
-
-        const rect = invoice.getBoundingClientRect()
-        return {
-          x: Math.floor(rect.left),
-          y: Math.floor(rect.top),
-          width: Math.ceil(rect.width),
-          height: Math.ceil(rect.height)
-        }
-      })()
-    `) as { x: number; y: number; width: number; height: number }
-    const image = await win.webContents.capturePage(captureRect)
+    const image = await win.webContents.capturePage(measuredRect)
     const imageDataUrl = image.toDataURL()
     const imageSize = image.getSize()
     logger.info(
-      `绿界发票截图完成: ${measuredRect.width}x${measuredRect.height}, scale=${captureScale}, image=${imageSize.width}x${imageSize.height}`,
+      `绿界发票原始截图完成: ${measuredRect.width}x${measuredRect.height}, image=${imageSize.width}x${imageSize.height}`,
       'engine'
     )
 
-    return printHtml({
-      ...htmlTask,
-      blocks: [
-        {
-          content: buildEcpayImageHtml(imageDataUrl, htmlTask),
-          position: htmlTask.position ?? { top: 0, left: 0 }
-        }
-      ]
-    })
+    return printEcpayImage(imageTask, imageDataUrl)
   } finally {
     win.destroy()
   }
 }
 
-function buildEcpayImageHtml(imageDataUrl: string, task: PrintTask): string {
-  const box = getEcpayPrintBox(task)
+async function printEcpayImage(task: PrintTask, imageDataUrl: string): Promise<string> {
+  const win = new BrowserWindow({
+    width: 800,
+    height: 1200,
+    show: false,
+    webPreferences: {
+      offscreen: true
+    }
+  })
 
-  return `<div style="width:${box.width};height:${box.height};overflow:hidden;"><img src="${imageDataUrl}" style="display:block;width:100%;height:100%;object-fit:contain;object-position:top left;" /></div>`
+  try {
+    const html = buildEcpayImagePrintHtml(imageDataUrl, task)
+    await win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
+    await waitForRenderReady(win)
+
+    const pdfPath = await createPdfOutputPath(task)
+    const pdf = await win.webContents.printToPDF(buildElectronPdfOptions(task))
+    await fs.writeFile(pdfPath, pdf)
+    logger.info(`绿界发票图片 PDF 已生成: ${pdfPath}`, 'engine')
+
+    if (process.platform === 'win32') {
+      await printBrowserWindow(win, task, '绿界发票')
+    } else {
+      await printPdfFile(pdfPath, task)
+    }
+
+    return pdfPath
+  } finally {
+    win.destroy()
+  }
 }
 
-function getEcpayPrintBox(task: PrintTask): { width: string; height: string } {
+function buildEcpayImagePrintHtml(imageDataUrl: string, task: PrintTask): string {
   if (!task.paperSize) {
-    return { width: 'auto', height: 'auto' }
+    throw new Error('绿界发票图片打印缺少纸张尺寸')
   }
 
-  const margins = task.margins ?? DEFAULT_MARGINS
   const dim = getPaperDimensions(task.paperSize)
-  const widthMm = Math.max(1, dim.width - margins.left - margins.right)
-  const heightMm = Math.max(1, dim.height - margins.top - margins.bottom)
-  return { width: `${widthMm}mm`, height: `${heightMm}mm` }
+
+  return `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+@page { size: ${dim.width}mm ${dim.height}mm; margin: 0; }
+* { box-sizing: border-box; }
+html,
+body {
+  width: ${dim.width}mm;
+  height: ${dim.height}mm;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  background: #fff;
 }
-
-function getEcpayCaptureScale(task: PrintTask, rect: { width: number; height: number }): number {
-  const margins = task.margins ?? DEFAULT_MARGINS
-  const dim = task.paperSize
-    ? getPaperDimensions(task.paperSize)
-    : { width: pxToMm(rect.width), height: pxToMm(rect.height) }
-  const printableWidthMm = Math.max(1, dim.width - margins.left - margins.right)
-  const printableHeightMm = Math.max(1, dim.height - margins.top - margins.bottom)
-  const widthScale = printableWidthMm / pxToMm(rect.width)
-  const heightScale = printableHeightMm / pxToMm(rect.height)
-  const printScale = Math.min(widthScale, heightScale)
-  const targetPixelWidth = (pxToMm(rect.width) * printScale / 25.4) * ECPAY_CAPTURE_DPI
-  const targetPixelHeight = (pxToMm(rect.height) * printScale / 25.4) * ECPAY_CAPTURE_DPI
-  const scale = Math.max(targetPixelWidth / rect.width, targetPixelHeight / rect.height, 1)
-
-  return Math.min(ECPAY_MAX_CAPTURE_SCALE, Number(scale.toFixed(2)))
+img {
+  display: block;
+  width: ${dim.width}mm;
+  height: ${dim.height}mm;
+  object-fit: fill;
+  object-position: top left;
+}
+@media print {
+  body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+}
+</style>
+</head>
+<body>
+<img src="${imageDataUrl}" alt="">
+</body>
+</html>`
 }
 
 function pxToMm(value: number): number {
@@ -372,11 +382,15 @@ async function printPdfWithElectron(pdfPath: string, task: PrintTask): Promise<v
 
 async function printBrowserWindow(win: BrowserWindow, task: PrintTask, sourceLabel: string): Promise<void> {
   await new Promise<void>((resolve, reject) => {
-    win.webContents.print(buildElectronPrintOptions(task), (success, errorType) => {
+    const printer = task.printer || configManager.get().defaultPrinter || ''
+    const options = buildElectronPrintOptions(task)
+    logger.info(`提交 ${sourceLabel} 到打印机: ${printer || '系统默认打印机'}`, 'engine')
+    win.webContents.print(options, (success, errorType) => {
       if (success) {
+        logger.info(`${sourceLabel} 打印任务已提交: ${task.id}`, 'engine')
         resolve()
       } else {
-        reject(new Error(`${sourceLabel} 鎵撳嵃澶辫触: ${errorType}`))
+        reject(new Error(`${sourceLabel} 打印失败: ${errorType}`))
       }
     })
   })
