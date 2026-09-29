@@ -45,7 +45,9 @@ export class WsServer {
 
       ws.on('message', async (data) => {
         try {
-          const cmd = JSON.parse(data.toString()) as PrintCommand
+          const text = data.toString()
+          logger.info(`收到 WebSocket 消息，长度: ${text.length}`, 'ws')
+          const cmd = JSON.parse(text) as PrintCommand
           if (cmd.type !== 'print') {
             ws.send(JSON.stringify({ success: false, error: '未知指令类型' }))
             return

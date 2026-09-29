@@ -15,6 +15,13 @@ const saveMsg = ref('')
 const restarting = ref(false)
 const printers = ref<PrinterInfo[]>([])
 
+const logLevelOptions = [
+  { label: 'Debug - 调试（最详细）', value: 'debug' },
+  { label: 'Info - 信息（推荐）', value: 'info' },
+  { label: 'Warn - 警告', value: 'warn' },
+  { label: 'Error - 错误（最精简）', value: 'error' }
+]
+
 const printerOptions = computed(() => {
   const options = [...printers.value]
   const selected = config.value.defaultPrinter.trim()
@@ -28,6 +35,14 @@ const printerOptions = computed(() => {
   }
   return options
 })
+
+const printerSelectOptions = computed(() => [
+  { label: '使用系统默认打印机', value: '' },
+  ...printerOptions.value.map((printer) => ({
+    label: `${printer.name}${printer.isDefault ? '（系统默认）' : ''}`,
+    value: printer.name
+  }))
+])
 
 let unbindConfig: (() => void) | null = null
 
@@ -83,11 +98,11 @@ onUnmounted(() => {
       <div class="form-row">
         <label class="form-label">TCP Socket 端口</label>
         <div class="form-input-wrap">
-          <input
-            v-model.number="config.tcpPort"
-            type="number"
-            min="1024"
-            max="65535"
+          <a-input-number
+            v-model:value="config.tcpPort"
+            :min="1024"
+            :max="65535"
+            :precision="0"
             class="form-input"
             placeholder="9527"
           />
@@ -98,11 +113,11 @@ onUnmounted(() => {
       <div class="form-row">
         <label class="form-label">WebSocket 端口</label>
         <div class="form-input-wrap">
-          <input
-            v-model.number="config.wsPort"
-            type="number"
-            min="1024"
-            max="65535"
+          <a-input-number
+            v-model:value="config.wsPort"
+            :min="1024"
+            :max="65535"
+            :precision="0"
             class="form-input"
             placeholder="9528"
           />
@@ -113,22 +128,18 @@ onUnmounted(() => {
       <div class="form-row">
         <label class="form-label">日志级别</label>
         <div class="form-input-wrap">
-          <select v-model="config.logLevel" class="form-input">
-            <option value="debug">Debug - 调试（最详细）</option>
-            <option value="info">Info - 信息（推荐）</option>
-            <option value="warn">Warn - 警告</option>
-            <option value="error">Error - 错误（最精简）</option>
-          </select>
+          <a-select
+            v-model:value="config.logLevel"
+            :options="logLevelOptions"
+            class="form-input"
+          />
         </div>
       </div>
 
       <div class="form-row">
         <label class="form-label">开机自启动</label>
         <div class="form-input-wrap">
-          <label class="switch">
-            <input v-model="config.autoStart" type="checkbox" />
-            <span class="slider" />
-          </label>
+          <a-switch v-model:checked="config.autoStart" class="auto-start-switch" />
           <span class="form-hint">系统启动时自动运行打印服务</span>
         </div>
       </div>
@@ -140,17 +151,12 @@ onUnmounted(() => {
         <label class="form-label">默认打印机</label>
         <div class="form-input-wrap">
           <div class="printer-select-row">
-            <select v-model="config.defaultPrinter" class="form-input">
-              <option value="">使用系统默认打印机</option>
-              <option
-                v-for="printer in printerOptions"
-                :key="printer.name"
-                :value="printer.name"
-              >
-                {{ printer.name }}{{ printer.isDefault ? '（系统默认）' : '' }}
-              </option>
-            </select>
-            <button type="button" class="refresh-btn" @click="refreshPrinters">刷新</button>
+            <a-select
+              v-model:value="config.defaultPrinter"
+              :options="printerSelectOptions"
+              class="form-input"
+            />
+            <a-button html-type="button" @click="refreshPrinters">刷新</a-button>
           </div>
           <span class="form-hint">
             打印指令未指定打印机时使用此打印机；选择“使用系统默认打印机”则不指定打印机
@@ -160,13 +166,16 @@ onUnmounted(() => {
     </div>
 
     <div class="actions">
-      <button
-        :class="['save-btn', { saving }]"
+      <a-button
+        type="primary"
+        size="large"
+        class="save-btn"
+        :loading="saving"
         :disabled="saving"
         @click="saveConfig"
       >
         {{ saving ? '保存中...' : '保存配置并重启服务' }}
-      </button>
+      </a-button>
       <span v-if="saveMsg" :class="['save-msg', { error: saveMsg.startsWith('保存失败') }]">
         {{ saveMsg }}
       </span>
@@ -194,9 +203,9 @@ onUnmounted(() => {
 
 <style scoped>
 .settings-panel {
-  height: 100%;
-  overflow-y: auto;
-  max-width: 700px;
+  min-height: 100%;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .section-title {
@@ -211,6 +220,8 @@ onUnmounted(() => {
   border-radius: 8px;
   padding: 24px;
   border: 1px solid #e4e7ed;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .form-row {
@@ -234,32 +245,24 @@ onUnmounted(() => {
 
 .form-input-wrap {
   flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 6px;
 }
 
 .form-input {
-  height: 32px;
-  padding: 0 12px;
-  border: 1px solid #dcdfe6;
-  border-radius: 4px;
-  font-size: 14px;
-  color: #303133;
-  background: #fff;
-  transition: border-color 0.2s;
   width: 100%;
   box-sizing: border-box;
-}
-
-.form-input:focus {
-  outline: none;
-  border-color: #409eff;
 }
 
 .form-hint {
   font-size: 12px;
   color: #909399;
+}
+
+.auto-start-switch {
+  align-self: flex-start;
 }
 
 .printer-select-row {
@@ -268,96 +271,26 @@ onUnmounted(() => {
 }
 
 .printer-select-row .form-input {
+  flex: 1;
   min-width: 0;
-}
-
-.refresh-btn {
-  height: 32px;
-  padding: 0 12px;
-  font-size: 12px;
-  border: 1px solid #dcdfe6;
-  background: #fff;
-  border-radius: 4px;
-  cursor: pointer;
-  color: #606266;
-  flex-shrink: 0;
-}
-
-.refresh-btn:hover {
-  color: #409eff;
-  border-color: #409eff;
-}
-
-.switch {
-  position: relative;
-  display: inline-block;
-  width: 40px;
-  height: 20px;
-}
-
-.switch input {
-  opacity: 0;
-  width: 0;
-  height: 0;
-}
-
-.slider {
-  position: absolute;
-  cursor: pointer;
-  inset: 0;
-  background: #dcdfe6;
-  border-radius: 20px;
-  transition: 0.3s;
-}
-
-.slider::before {
-  content: '';
-  position: absolute;
-  height: 16px;
-  width: 16px;
-  left: 2px;
-  bottom: 2px;
-  background: #fff;
-  border-radius: 50%;
-  transition: 0.3s;
-}
-
-input:checked + .slider {
-  background: #409eff;
-}
-
-input:checked + .slider::before {
-  transform: translateX(20px);
 }
 
 .actions {
   margin-top: 24px;
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 16px;
+  justify-content: center;
+  gap: 8px;
 }
 
 .save-btn {
-  padding: 10px 28px;
-  background: #409eff;
-  color: #fff;
-  border: none;
-  border-radius: 6px;
-  font-size: 14px;
-  cursor: pointer;
-  transition: background 0.2s;
-}
-
-.save-btn:hover {
-  background: #66b1ff;
-}
-
-.save-btn:disabled {
-  background: #a0cfff;
-  cursor: not-allowed;
+  min-width: 220px;
 }
 
 .save-msg {
+  display: block;
+  text-align: center;
   font-size: 13px;
   color: #67c23a;
 }

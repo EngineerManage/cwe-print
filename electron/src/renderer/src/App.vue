@@ -3,9 +3,11 @@ import { ref } from 'vue'
 import StatusPanel from './components/StatusPanel.vue'
 import SettingsPanel from './components/SettingsPanel.vue'
 import LogPanel from './components/LogPanel.vue'
+import DebugPanel from './components/DebugPanel.vue'
 
-const activeTab = ref<'status' | 'settings' | 'logs'>('status')
+const activeTab = ref<'status' | 'settings' | 'logs' | 'debug'>('status')
 const appVersion = '1.0.0'
+const isDev = import.meta.env.DEV
 </script>
 
 <template>
@@ -35,6 +37,13 @@ const appVersion = '1.0.0'
         >
           运行日志
         </button>
+        <button
+          v-if="isDev"
+          :class="['nav-tab', { active: activeTab === 'debug' }]"
+          @click="activeTab = 'debug'"
+        >
+          调试模式
+        </button>
       </nav>
     </header>
 
@@ -42,6 +51,7 @@ const appVersion = '1.0.0'
       <StatusPanel v-if="activeTab === 'status'" />
       <SettingsPanel v-if="activeTab === 'settings'" />
       <LogPanel v-if="activeTab === 'logs'" />
+      <DebugPanel v-if="isDev && activeTab === 'debug'" />
     </main>
   </div>
 </template>
@@ -51,6 +61,7 @@ const appVersion = '1.0.0'
   display: flex;
   flex-direction: column;
   height: 100vh;
+  overflow: hidden;
   background: #f5f7fa;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 }
@@ -64,6 +75,8 @@ const appVersion = '1.0.0'
   background: #fff;
   border-bottom: 1px solid #e4e7ed;
   flex-shrink: 0;
+  position: relative;
+  z-index: 1;
 }
 
 .logo {
@@ -119,7 +132,17 @@ const appVersion = '1.0.0'
 
 .app-body {
   flex: 1;
-  overflow: hidden;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
   padding: 20px;
+}
+
+:global(html),
+:global(body),
+:global(#app) {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
 }
 </style>

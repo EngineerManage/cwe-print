@@ -6,7 +6,10 @@ import { logger } from './utils/logger'
 import { serviceManager } from './utils/service-manager'
 import { handlePrintCommand } from './print/engine'
 import { printQueue, type PrintTask } from './print/queue'
+import type { PrintCommand } from './socket/tcp-server'
 import icon from '../../build/icon.png?asset'
+
+app.disableHardwareAcceleration()
 
 let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
@@ -232,6 +235,37 @@ ipcMain.handle('print:reprint', (_event, taskId: string) => {
   handlePrintCommand(reprintCmd as unknown as Parameters<typeof handlePrintCommand>[0])
   return { success: true }
 })
+
+ipcMain.handle(
+  'print:debug',
+  async (_event, payload: Pick<PrintCommand, 'format' | 'content'>) => {
+    if (!is.dev) {
+      return { success: false, error: '调试打印只允许在本地 dev 环境使用' }
+    }
+
+    if (payload.format === 'escpos') {
+      return { success: false, error: '小票机打印暂未实现' }
+    }
+
+    if (!payload.content.trim()) {
+      return { success: false, error: '请输入打印内容' }
+    }
+
+    const command: PrintCommand = {
+      id: `debug-${Date.now()}`,
+      type: 'print',
+      format: payload.format,
+      content: payload.content
+    }
+
+    try {
+      const result = await handlePrintCommand(command)
+      return { success: result.status === 'success', ...result }
+    } catch (err) {
+      return { success: false, error: (err as Error).message }
+    }
+  }
+)
 
 // 配置变更时通知渲染进程
 configManager.on('changed', (config) => {

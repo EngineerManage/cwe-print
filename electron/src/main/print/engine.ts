@@ -78,10 +78,7 @@ async function printHtml(task: PrintTask): Promise<string> {
   const win = new BrowserWindow({
     width: 800,
     height: 600,
-    show: false,
-    webPreferences: {
-      offscreen: true
-    }
+    show: false
   })
 
   try {
@@ -185,10 +182,7 @@ async function printEcpay(task: PrintTask): Promise<string> {
   const win = new BrowserWindow({
     width: 800,
     height: 1200,
-    show: false,
-    webPreferences: {
-      offscreen: true
-    }
+    show: false
   })
 
   try {
@@ -241,10 +235,7 @@ async function printEcpayImage(task: PrintTask, imageDataUrl: string): Promise<s
   const win = new BrowserWindow({
     width: 800,
     height: 1200,
-    show: false,
-    webPreferences: {
-      offscreen: true
-    }
+    show: false
   })
 
   try {
@@ -353,10 +344,7 @@ async function printPdfWithElectron(pdfPath: string, task: PrintTask): Promise<v
   const win = new BrowserWindow({
     width: 800,
     height: 600,
-    show: false,
-    webPreferences: {
-      offscreen: true
-    }
+    show: false
   })
 
   try {

@@ -1,31 +1,76 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import type { LogEntry, PrintTask } from '../../../preload'
 
 type ViewMode = 'log' | 'list'
 
 const tasks = ref<PrintTask[]>([])
+const logs = ref<LogEntry[]>([])
+const logContainer = ref<HTMLElement | null>(null)
 const viewMode = ref<ViewMode>('log')
 const autoScroll = ref(true)
 const filterLevel = ref<string>('all')
 const filterSource = ref<string>('all')
 
-let unbindQueue: (() => void) | null = null
+const levelOptions = [
+  { label: '全部级别', value: 'all' },
+  { label: 'Debug', value: 'debug' },
+  { label: 'Info', value: 'info' },
+  { label: 'Warn', value: 'warn' },
+  { label: 'Error', value: 'error' }
+]
 
-onMounted(() => {
-  // 日志模式和列表模式使用同一份打印任务数据，只是展示形态不同。
-  loadTasks()
+const sourceOptions = [
+  { label: '全部来源', value: 'all' },
+  { label: 'TCP', value: 'tcp' },
+  { label: 'WebSocket', value: 'ws' },
+  { label: '队列', value: 'queue' },
+  { label: '引擎', value: 'engine' },
+  { label: '服务', value: 'service' }
+]
+
+const viewModeOptions = [
+  { label: '日志模式', value: 'log' },
+  { label: '列表模式', value: 'list' }
+]
+
+let unbindQueue: (() => void) | null = null
+let unbindLog: (() => void) | null = null
+
+onMounted(async () => {
+  await refreshAll()
   unbindQueue = window.electronAPI.onPrintQueueChange(() => {
     loadTasks()
+  })
+  unbindLog = window.electronAPI.onLog((log) => {
+    logs.value = [...logs.value, log].slice(-1000)
+    scrollLogToBottom()
   })
 })
 
 onUnmounted(() => {
   unbindQueue?.()
+  unbindLog?.()
 })
 
 async function loadTasks() {
   tasks.value = await window.electronAPI.getPrintTasks()
+}
+
+async function loadLogs() {
+  logs.value = await window.electronAPI.getLogs()
+  scrollLogToBottom()
+}
+
+async function refreshAll() {
+  await Promise.all([loadTasks(), loadLogs()])
+}
+
+async function scrollLogToBottom() {
+  if (!autoScroll.value) return
+  await nextTick()
+  if (!logContainer.value) return
+  logContainer.value.scrollTop = logContainer.value.scrollHeight
 }
 
 async function reprint(task: PrintTask) {
@@ -80,7 +125,7 @@ function statusText(status: string) {
     case 'printing':
       return '打印中'
     case 'success':
-      return '成功'
+      return '已完成'
     case 'failed':
       return '失败'
     default:
@@ -93,26 +138,10 @@ function statusClass(status: string) {
 }
 
 const filteredLogs = computed(() => {
-  return taskLogs.value.filter((log) => {
+  return logs.value.filter((log) => {
     if (filterLevel.value !== 'all' && log.level !== filterLevel.value) return false
     if (filterSource.value !== 'all' && log.source !== filterSource.value) return false
     return true
-  })
-})
-
-const taskLogs = computed<LogEntry[]>(() => {
-  return tasks.value.map((task) => {
-    const printer = task.printer || '系统默认打印机'
-    const time = task.completedAt || task.startedAt || task.createdAt
-    const level = task.status === 'failed' ? 'error' : 'info'
-    const output = task.outputPath ? `，PDF: ${task.outputPath}` : ''
-    const suffix = task.error ? `，错误: ${task.error}` : ''
-    return {
-      time,
-      level,
-      source: 'queue',
-      message: `${statusText(task.status)}: ${task.id}，格式: ${task.format}，打印机: ${printer}${output}${suffix}`
-    }
   })
 })
 </script>
@@ -122,45 +151,29 @@ const taskLogs = computed<LogEntry[]>(() => {
     <div class="log-toolbar">
       <div class="log-title">{{ viewMode === 'log' ? '运行日志' : '打印记录' }}</div>
       <div class="log-filters" :class="{ 'filters-hidden': viewMode !== 'log' }">
-        <select v-model="filterLevel" class="filter-select">
-          <option value="all">全部级别</option>
-          <option value="debug">Debug</option>
-          <option value="info">Info</option>
-          <option value="warn">Warn</option>
-          <option value="error">Error</option>
-        </select>
-        <select v-model="filterSource" class="filter-select">
-          <option value="all">全部来源</option>
-          <option value="tcp">TCP</option>
-          <option value="ws">WebSocket</option>
-          <option value="queue">队列</option>
-          <option value="engine">引擎</option>
-          <option value="service">服务</option>
-        </select>
-        <label class="filter-check">
-          <input v-model="autoScroll" type="checkbox" />
-          自动滚动
-        </label>
-        <button class="clear-btn" @click="loadTasks">刷新</button>
+        <a-select
+          v-model:value="filterLevel"
+          :options="levelOptions"
+          class="filter-select"
+        />
+        <a-select
+          v-model:value="filterSource"
+          :options="sourceOptions"
+          class="filter-select"
+        />
+        <a-checkbox v-model:checked="autoScroll">自动滚动</a-checkbox>
+        <a-button html-type="button" @click="refreshAll">刷新</a-button>
       </div>
       <!-- 日志/列表模式切换：独立块，与 filters 分开，避免 filters 显隐导致布局抖动 -->
-      <div class="view-toggle">
-        <button
-          :class="['toggle-btn', { active: viewMode === 'log' }]"
-          @click="viewMode = 'log'"
-        >
-          日志模式
-        </button>
-        <button
-          :class="['toggle-btn', { active: viewMode === 'list' }]"
-          @click="viewMode = 'list'"
-        >
-          列表模式
-        </button>
-      </div>
+      <a-radio-group
+        v-model:value="viewMode"
+        :options="viewModeOptions"
+        option-type="button"
+        button-style="solid"
+      />
     </div>
 
-    <div v-if="viewMode === 'log'" class="log-container">
+    <div v-if="viewMode === 'log'" ref="logContainer" class="log-container">
       <div v-if="filteredLogs.length === 0" class="log-empty">暂无日志</div>
       <div v-for="(log, i) in filteredLogs" :key="i" class="log-row">
         <span class="log-time">{{ formatTime(log.time) }}</span>
@@ -192,7 +205,7 @@ const taskLogs = computed<LogEntry[]>(() => {
             </div>
             <div v-if="task.error" class="task-error">{{ task.error }}</div>
           </div>
-          <button class="reprint-btn" @click="reprint(task)">重打</button>
+          <a-button html-type="button" size="small" @click="reprint(task)">重打</a-button>
         </div>
       </div>
     </div>
@@ -232,57 +245,7 @@ const taskLogs = computed<LogEntry[]>(() => {
 }
 
 .filter-select {
-  height: 28px;
-  padding: 0 8px;
-  border: 1px solid #dcdfe6;
-  border-radius: 4px;
-  font-size: 12px;
-  color: #606266;
-  background: #fff;
-}
-
-.filter-check {
-  font-size: 12px;
-  color: #606266;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.view-toggle {
-  display: flex;
-  border: 1px solid #dcdfe6;
-  border-radius: 4px;
-  overflow: hidden;
-}
-
-.toggle-btn {
-  padding: 4px 12px;
-  font-size: 12px;
-  border: none;
-  background: #fff;
-  cursor: pointer;
-  color: #606266;
-}
-
-.toggle-btn.active {
-  background: #409eff;
-  color: #fff;
-}
-
-.clear-btn {
-  padding: 4px 12px;
-  font-size: 12px;
-  border: 1px solid #dcdfe6;
-  background: #fff;
-  border-radius: 4px;
-  cursor: pointer;
-  color: #606266;
-}
-
-.clear-btn:hover {
-  color: #409eff;
-  border-color: #409eff;
+  width: 120px;
 }
 
 .log-container {
@@ -418,19 +381,4 @@ const taskLogs = computed<LogEntry[]>(() => {
   color: #f56c6c;
 }
 
-.reprint-btn {
-  padding: 5px 14px;
-  font-size: 12px;
-  border: 1px solid #409eff;
-  background: #fff;
-  border-radius: 4px;
-  cursor: pointer;
-  color: #409eff;
-  flex-shrink: 0;
-}
-
-.reprint-btn:hover {
-  background: #409eff;
-  color: #fff;
-}
 </style>

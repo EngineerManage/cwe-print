@@ -16,9 +16,11 @@ export interface Api {
   // 打印任务：列表模式展示、重打、以及队列变更通知
   getPrintTasks: () => Promise<PrintTask[]>
   reprintTask: (taskId: string) => Promise<{ success: boolean; error?: string }>
+  debugPrint: (payload: DebugPrintPayload) => Promise<DebugPrintResult>
   onPrintQueueChange: (callback: () => void) => () => void
 
   // 日志
+  getLogs: () => Promise<LogEntry[]>
   onLog: (callback: (log: LogEntry) => void) => () => void
 }
 
@@ -63,6 +65,21 @@ export interface PrintTask {
   error?: string
 }
 
+export type PrintFormat = 'pdf' | 'html' | 'image' | 'escpos' | 'ecpay'
+
+export interface DebugPrintPayload {
+  format: PrintFormat
+  content: string
+}
+
+export interface DebugPrintResult {
+  success: boolean
+  taskId?: string
+  status?: string
+  outputPath?: string
+  error?: string
+}
+
 export interface LogEntry {
   time: string
   level: string
@@ -90,12 +107,14 @@ const api: Api = {
 
   getPrintTasks: () => ipcRenderer.invoke('queue:tasks'),
   reprintTask: (taskId) => ipcRenderer.invoke('print:reprint', taskId),
+  debugPrint: (payload) => ipcRenderer.invoke('print:debug', payload),
   onPrintQueueChange: (callback) => {
     const handler = () => callback()
     ipcRenderer.on('queue:changed', handler)
     return () => ipcRenderer.off('queue:changed', handler)
   },
 
+  getLogs: () => ipcRenderer.invoke('log:get'),
   onLog: (callback) => {
     const handler = (_: unknown, log: LogEntry) => callback(log)
     ipcRenderer.on('log:entry', handler)

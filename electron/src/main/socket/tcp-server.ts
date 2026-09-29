@@ -118,6 +118,7 @@ export class TcpServer {
 
   private async handleLine(line: string, socket: Socket): Promise<void> {
     try {
+      logger.info(`收到 TCP 消息，长度: ${line.length}`, 'tcp')
       const cmd = JSON.parse(line) as PrintCommand
       if (cmd.type !== 'print') {
         socket.write(JSON.stringify({ success: false, error: '未知指令类型' }) + '\n')

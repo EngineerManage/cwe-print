@@ -131,7 +131,7 @@ function printerStatusClass(value: number) {
 
     <div class="section-title" style="margin-top: 24px">
       打印机列表
-      <button class="refresh-btn" @click="refreshPrinters">刷新</button>
+      <a-button html-type="button" @click="refreshPrinters">刷新</a-button>
     </div>
     <div class="printer-list">
       <div v-if="printers.length === 0" class="empty">暂无打印机</div>
@@ -156,8 +156,7 @@ function printerStatusClass(value: number) {
 
 <style scoped>
 .status-panel {
-  height: 100%;
-  overflow-y: auto;
+  min-height: 100%;
 }
 
 .section-title {
@@ -240,8 +239,9 @@ function printerStatusClass(value: number) {
 }
 
 .queue-stats {
-  display: flex;
-  gap: 32px;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  width: 100%;
 }
 
 .queue-item {
@@ -249,6 +249,7 @@ function printerStatusClass(value: number) {
   flex-direction: column;
   align-items: center;
   gap: 4px;
+  min-width: 0;
 }
 
 .queue-count {
@@ -275,21 +276,6 @@ function printerStatusClass(value: number) {
 .queue-label {
   font-size: 12px;
   color: #909399;
-}
-
-.refresh-btn {
-  padding: 4px 12px;
-  font-size: 12px;
-  border: 1px solid #dcdfe6;
-  background: #fff;
-  border-radius: 4px;
-  cursor: pointer;
-  color: #606266;
-}
-
-.refresh-btn:hover {
-  color: #409eff;
-  border-color: #409eff;
 }
 
 .printer-list {
