@@ -1,4 +1,5 @@
-import { app, shell, BrowserWindow, ipcMain, Tray, Menu, nativeImage } from 'electron'
+import { app, shell, BrowserWindow, ipcMain, Tray, Menu, nativeImage, crashReporter } from 'electron'
+import fs from 'fs'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { configManager } from './utils/config'
@@ -7,12 +8,22 @@ import { serviceManager } from './utils/service-manager'
 import { handlePrintCommand } from './print/engine'
 import { printQueue, type PrintTask } from './print/queue'
 import type { PrintCommand } from './socket/tcp-server'
+import { checkForUpdatesOnStartup, initAutoUpdater, isUpdateInstalling } from './utils/updater'
 import icon from '../../build/icon.png?asset'
 
 app.disableHardwareAcceleration()
+crashReporter.start({
+  productName: 'CWE Print',
+  uploadToServer: false,
+  compress: true,
+  globalExtra: {
+    app: 'cwe-print'
+  }
+})
 
 let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
+let sessionMarkerPath = ''
 
 const PRINTER_STATUS_READY = 0
 const PRINTER_STATUS_UNKNOWN = 2
@@ -46,9 +57,88 @@ const WINDOWS_PRINTER_STATUS = {
   SERVER_UNKNOWN: 0x800000
 } as const
 
+function serializeError(err: unknown): Record<string, unknown> {
+  if (err instanceof Error) {
+    return {
+      name: err.name,
+      message: err.message,
+      stack: err.stack
+    }
+  }
+  return { value: String(err) }
+}
+
+function installCrashLogging(): void {
+  process.on('uncaughtException', (err) => {
+    logger.error(`主进程未捕获异常: ${err.message}`, 'crash', serializeError(err))
+  })
+
+  process.on('unhandledRejection', (reason) => {
+    logger.error('主进程 Promise 未处理异常', 'crash', serializeError(reason))
+  })
+
+  app.on('render-process-gone', (_event, webContents, details) => {
+    logger.error(`渲染进程异常退出: ${details.reason}`, 'crash', {
+      reason: details.reason,
+      exitCode: details.exitCode,
+      url: webContents.getURL()
+    })
+
+    if (mainWindow && webContents.id === mainWindow.webContents.id && !mainWindow.isDestroyed()) {
+      logger.warn('主窗口渲染进程异常退出，正在自动重载窗口', 'crash')
+      mainWindow.reload()
+    }
+  })
+
+  app.on('child-process-gone', (_event, details) => {
+    logger.error(`子进程异常退出: ${details.type} / ${details.reason}`, 'crash', details)
+  })
+}
+
+function initSessionCrashMarker(): void {
+  sessionMarkerPath = join(app.getPath('userData'), 'app-running.json')
+
+  if (fs.existsSync(sessionMarkerPath)) {
+    try {
+      const previous = JSON.parse(fs.readFileSync(sessionMarkerPath, 'utf-8')) as Record<string, unknown>
+      logger.error('检测到上次应用可能异常退出，正常退出标记未清理', 'crash', previous)
+    } catch {
+      logger.error('检测到上次应用可能异常退出，正常退出标记未清理', 'crash')
+    }
+  }
+
+  fs.writeFileSync(
+    sessionMarkerPath,
+    JSON.stringify(
+      {
+        pid: process.pid,
+        startedAt: new Date().toISOString(),
+        version: app.getVersion()
+      },
+      null,
+      2
+    ),
+    'utf-8'
+  )
+}
+
+function clearSessionCrashMarker(): void {
+  if (!sessionMarkerPath) return
+  try {
+    if (fs.existsSync(sessionMarkerPath)) {
+      fs.unlinkSync(sessionMarkerPath)
+    }
+  } catch (err) {
+    logger.warn(`清理运行标记失败: ${(err as Error).message}`, 'crash')
+  }
+}
+
+installCrashLogging()
+
 function createWindow(): void {
   mainWindow = new BrowserWindow({
-    width: 1000,
+    width: 1180,
+    minWidth: 1180,
     height: 700,
     show: false,
     autoHideMenuBar: true,
@@ -70,6 +160,14 @@ function createWindow(): void {
       event.preventDefault()
       mainWindow?.hide()
     }
+  })
+
+  mainWindow.on('unresponsive', () => {
+    logger.warn('主窗口无响应', 'crash')
+  })
+
+  mainWindow.on('responsive', () => {
+    logger.info('主窗口已恢复响应', 'crash')
   })
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
@@ -136,6 +234,7 @@ function createTray(): void {
 }
 
 // IPC 处理器
+ipcMain.handle('app:getVersion', () => app.getVersion())
 ipcMain.handle('config:get', () => configManager.get())
 ipcMain.handle('config:set', (_event, partial) => configManager.set(partial))
 
@@ -267,6 +366,11 @@ ipcMain.handle(
   }
 )
 
+ipcMain.handle('renderer:error', (_event, payload) => {
+  logger.error(`渲染进程错误: ${payload?.message || '未知错误'}`, 'renderer', payload)
+  return { success: true }
+})
+
 // 配置变更时通知渲染进程
 configManager.on('changed', (config) => {
   BrowserWindow.getAllWindows().forEach((win) => {
@@ -283,6 +387,11 @@ printQueue.on('changed', () => {
 
 app.whenReady().then(() => {
   electronApp.setAppUserModelId('com.cwe.print')
+  initSessionCrashMarker()
+  logger.info('崩溃诊断已启用', 'crash', {
+    crashDumpsPath: app.getPath('crashDumps'),
+    logPath: join(app.getPath('userData'), 'logs', 'app.jsonl')
+  })
 
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)
@@ -291,6 +400,8 @@ app.whenReady().then(() => {
   createWindow()
   createTray()
   serviceManager.init()
+  initAutoUpdater()
+  checkForUpdatesOnStartup()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
@@ -307,6 +418,11 @@ app.on('window-all-closed', () => {
 let isQuitting = false
 
 app.on('before-quit', (event) => {
+  if (isUpdateInstalling()) {
+    clearSessionCrashMarker()
+    return
+  }
+
   // Electron 不会等待 before-quit 里的异步操作；必须先阻止默认退出，
   // 等服务清理完成后再手动 app.exit()，否则服务可能没停干净应用就退出了
   if (isQuitting) return
@@ -320,6 +436,7 @@ app.on('before-quit', (event) => {
       logger.error(`服务停止失败: ${(err as Error).message}`, 'app')
     })
     .finally(() => {
+      clearSessionCrashMarker()
       app.exit()
     })
 })

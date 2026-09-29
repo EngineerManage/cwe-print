@@ -11,6 +11,7 @@ class ServiceManager {
   private tcpServer = new TcpServer()
   private wsServer = new WsServer()
   private statusTimer: NodeJS.Timeout | null = null
+  private desiredRunning = false
 
   constructor() {
     this.tcpServer.onCommand(async (cmd) => handlePrintCommand(cmd))
@@ -30,11 +31,12 @@ class ServiceManager {
     // 打印队列变化时广播状态
     printQueue.on('changed', () => this.broadcastStatus())
 
-    // 定时广播状态（心跳）
-    this.statusTimer = setInterval(() => this.broadcastStatus(), 5000)
+    this.startStatusTimer()
   }
 
   async init(): Promise<void> {
+    this.desiredRunning = true
+    this.startStatusTimer()
     const config = configManager.get()
     await Promise.all([
       this.tcpServer.start(config.tcpPort).catch((err) => {
@@ -45,6 +47,37 @@ class ServiceManager {
       })
     ])
     this.broadcastStatus()
+  }
+
+  private startStatusTimer(): void {
+    if (this.statusTimer) return
+
+    // 定时广播状态（心跳），并在服务异常停止时自动拉起。
+    this.statusTimer = setInterval(() => {
+      this.ensureRunning()
+      this.broadcastStatus()
+    }, 5000)
+  }
+
+  private ensureRunning(): void {
+    if (!this.desiredRunning) return
+
+    const config = configManager.get()
+    const status = this.getStatus()
+
+    if (!status.tcp.running) {
+      logger.warn(`检测到 TCP 服务未运行，尝试自动重启，端口: ${config.tcpPort}`, 'service')
+      this.tcpServer.start(config.tcpPort).catch((err) => {
+        logger.error(`TCP 服务自动重启失败: ${err.message}`, 'service')
+      })
+    }
+
+    if (!status.ws.running) {
+      logger.warn(`检测到 WebSocket 服务未运行，尝试自动重启，端口: ${config.wsPort}`, 'service')
+      this.wsServer.start(config.wsPort).catch((err) => {
+        logger.error(`WebSocket 服务自动重启失败: ${err.message}`, 'service')
+      })
+    }
   }
 
   private async restartTcp(port: number): Promise<void> {
@@ -85,6 +118,7 @@ class ServiceManager {
   }
 
   async stop(): Promise<void> {
+    this.desiredRunning = false
     if (this.statusTimer) {
       clearInterval(this.statusTimer)
       this.statusTimer = null

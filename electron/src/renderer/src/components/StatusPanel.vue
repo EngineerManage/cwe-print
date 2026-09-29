@@ -2,6 +2,12 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import type { ServiceStatus, PrinterInfo } from '../../../preload'
 
+type QueueStatusFilter = 'all' | 'pending' | 'printing' | 'success' | 'failed'
+
+const emit = defineEmits<{
+  'open-queue-status': [status: QueueStatusFilter]
+}>()
+
 const status = ref<ServiceStatus>({
   tcp: { running: false, port: 0, clients: 0 },
   ws: { running: false, port: 0, clients: 0 },
@@ -60,6 +66,10 @@ function printerStatusClass(value: number) {
       return 'unknown'
   }
 }
+
+function openQueueStatus(status: QueueStatusFilter) {
+  emit('open-queue-status', status)
+}
 </script>
 
 <template>
@@ -104,27 +114,49 @@ function printerStatusClass(value: number) {
         </div>
       </div>
 
-      <div class="status-card wide">
+      <div
+        class="status-card wide queue-card"
+        role="button"
+        tabindex="0"
+        @click="openQueueStatus('all')"
+        @keydown.enter="openQueueStatus('all')"
+      >
         <div class="card-header">
           <span class="card-title">打印队列</span>
         </div>
         <div class="card-body queue-stats">
-          <div class="queue-item">
+          <button
+            class="queue-item"
+            type="button"
+            @click.stop="openQueueStatus('pending')"
+          >
             <span class="queue-count pending">{{ status.printQueue.pending }}</span>
             <span class="queue-label">待打印</span>
-          </div>
-          <div class="queue-item">
+          </button>
+          <button
+            class="queue-item"
+            type="button"
+            @click.stop="openQueueStatus('printing')"
+          >
             <span class="queue-count active">{{ status.printQueue.active }}</span>
             <span class="queue-label">打印中</span>
-          </div>
-          <div class="queue-item">
+          </button>
+          <button
+            class="queue-item"
+            type="button"
+            @click.stop="openQueueStatus('success')"
+          >
             <span class="queue-count success">{{ status.printQueue.completed }}</span>
             <span class="queue-label">已完成</span>
-          </div>
-          <div class="queue-item">
+          </button>
+          <button
+            class="queue-item"
+            type="button"
+            @click.stop="openQueueStatus('failed')"
+          >
             <span class="queue-count failed">{{ status.printQueue.failed }}</span>
             <span class="queue-label">失败</span>
-          </div>
+          </button>
         </div>
       </div>
     </div>
@@ -184,6 +216,10 @@ function printerStatusClass(value: number) {
 
 .status-card.wide {
   grid-column: span 2;
+}
+
+.queue-card {
+  cursor: pointer;
 }
 
 .card-header {
@@ -250,6 +286,16 @@ function printerStatusClass(value: number) {
   align-items: center;
   gap: 4px;
   min-width: 0;
+  padding: 8px 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.queue-item:hover {
+  background: #f5f7fa;
 }
 
 .queue-count {

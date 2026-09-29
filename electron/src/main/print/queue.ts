@@ -36,7 +36,10 @@ class PrintQueue extends EventEmitter {
       createdAt: new Date().toISOString()
     }
     this.queue.push(task)
-    logger.info(`收到打印任务，状态: 待打印，任务ID: ${task.id}, 格式: ${task.format}`, 'queue')
+    logger.info(`收到打印任务，状态: 待打印，任务ID: ${task.id}, 格式: ${task.format}`, 'queue', {
+      printCommand: cmd,
+      printTask: task
+    })
     this.emit('changed')
     return task
   }
@@ -53,7 +56,9 @@ class PrintQueue extends EventEmitter {
         this.currentTask = task
         task.status = 'printing'
         task.startedAt = new Date().toISOString()
-        logger.info(`打印任务状态: 打印中，任务ID: ${task.id}, 格式: ${task.format}`, 'queue')
+        logger.info(`打印任务状态: 打印中，任务ID: ${task.id}, 格式: ${task.format}`, 'queue', {
+          printTask: task
+        })
         this.emit('changed')
 
         try {
@@ -63,12 +68,17 @@ class PrintQueue extends EventEmitter {
           }
           task.status = 'success'
           task.completedAt = new Date().toISOString()
-          logger.info(`打印任务状态: 已完成，任务ID: ${task.id}`, 'queue')
+          logger.info(`打印任务状态: 已完成，任务ID: ${task.id}`, 'queue', {
+            printTask: task
+          })
         } catch (err) {
           task.status = 'failed'
           task.error = (err as Error).message
           task.completedAt = new Date().toISOString()
-          logger.error(`打印任务状态: 失败，任务ID: ${task.id}, 失败原因: ${task.error}`, 'queue')
+          logger.error(`打印任务状态: 失败，任务ID: ${task.id}, 失败原因: ${task.error}`, 'queue', {
+            error: task.error,
+            printTask: task
+          })
         } finally {
           this.currentTask = null
           this.emit('changed')

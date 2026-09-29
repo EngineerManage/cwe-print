@@ -1,6 +1,9 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
 export interface Api {
+  // 应用信息
+  getAppVersion: () => Promise<string>
+
   // 配置相关
   getConfig: () => Promise<AppConfig>
   setConfig: (config: Partial<AppConfig>) => Promise<AppConfig>
@@ -21,6 +24,8 @@ export interface Api {
 
   // 日志
   getLogs: () => Promise<LogEntry[]>
+  exportLogs: () => Promise<ExportLogsResult>
+  reportRendererError: (payload: RendererErrorPayload) => Promise<{ success: boolean }>
   onLog: (callback: (log: LogEntry) => void) => () => void
 }
 
@@ -85,9 +90,27 @@ export interface LogEntry {
   level: string
   message: string
   source: string
+  details?: unknown
+}
+
+export interface ExportLogsResult {
+  success: boolean
+  filePath?: string
+  error?: string
+}
+
+export interface RendererErrorPayload {
+  message: string
+  stack?: string
+  filename?: string
+  lineno?: number
+  colno?: number
+  type: 'error' | 'unhandledrejection'
 }
 
 const api: Api = {
+  getAppVersion: () => ipcRenderer.invoke('app:getVersion'),
+
   getConfig: () => ipcRenderer.invoke('config:get'),
   setConfig: (config) => ipcRenderer.invoke('config:set', config),
   onConfigChange: (callback) => {
@@ -115,6 +138,8 @@ const api: Api = {
   },
 
   getLogs: () => ipcRenderer.invoke('log:get'),
+  exportLogs: () => ipcRenderer.invoke('log:export'),
+  reportRendererError: (payload) => ipcRenderer.invoke('renderer:error', payload),
   onLog: (callback) => {
     const handler = (_: unknown, log: LogEntry) => callback(log)
     ipcRenderer.on('log:entry', handler)

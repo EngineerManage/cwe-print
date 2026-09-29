@@ -1,13 +1,27 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { onMounted, ref } from 'vue'
 import StatusPanel from './components/StatusPanel.vue'
 import SettingsPanel from './components/SettingsPanel.vue'
 import LogPanel from './components/LogPanel.vue'
 import DebugPanel from './components/DebugPanel.vue'
 
+type QueueStatusFilter = 'all' | 'pending' | 'printing' | 'success' | 'failed'
+
 const activeTab = ref<'status' | 'settings' | 'logs' | 'debug'>('status')
-const appVersion = '1.0.0'
+const queueStatusFilter = ref<QueueStatusFilter>('all')
+const logPanelKey = ref(0)
+const appVersion = ref('')
 const isDev = import.meta.env.DEV
+
+onMounted(async () => {
+  appVersion.value = await window.electronAPI.getAppVersion()
+})
+
+function openLogsWithQueueStatus(status: QueueStatusFilter) {
+  queueStatusFilter.value = status
+  logPanelKey.value += 1
+  activeTab.value = 'logs'
+}
 </script>
 
 <template>
@@ -16,7 +30,7 @@ const isDev = import.meta.env.DEV
       <div class="logo">
         <span class="logo-icon">🖨️</span>
         <span class="logo-text">卡挖易打印系统</span>
-        <span class="version">v{{ appVersion }}</span>
+        <span class="version">v{{ appVersion || '-' }}</span>
       </div>
       <nav class="nav-tabs">
         <button
@@ -48,9 +62,16 @@ const isDev = import.meta.env.DEV
     </header>
 
     <main class="app-body">
-      <StatusPanel v-if="activeTab === 'status'" />
+      <StatusPanel
+        v-if="activeTab === 'status'"
+        @open-queue-status="openLogsWithQueueStatus"
+      />
       <SettingsPanel v-if="activeTab === 'settings'" />
-      <LogPanel v-if="activeTab === 'logs'" />
+      <LogPanel
+        v-if="activeTab === 'logs'"
+        :key="logPanelKey"
+        :queue-status="queueStatusFilter"
+      />
       <DebugPanel v-if="isDev && activeTab === 'debug'" />
     </main>
   </div>
