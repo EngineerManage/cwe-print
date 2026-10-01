@@ -94,7 +94,7 @@ async function exportLogFile() {
   exportMsg.value = ''
   const result = await window.electronAPI.exportLogs()
   if (result.success) {
-    exportMsg.value = `日志已导出：${result.filePath || '-'}`
+    exportMsg.value = `诊断包已导出：${result.filePath || '-'}`
   } else if (result.error && result.error !== '已取消导出') {
     exportMsg.value = `导出失败：${result.error}`
   }
@@ -231,7 +231,7 @@ const filteredTasks = computed(() => {
           />
           <a-checkbox v-model:checked="autoScroll">自动滚动</a-checkbox>
           <a-button html-type="button" @click="refreshAll">刷新</a-button>
-          <a-button html-type="button" @click="exportLogFile">导出日志</a-button>
+          <a-button html-type="button" @click="exportLogFile">导出诊断包</a-button>
         </div>
       </div>
       <!-- 日志/列表模式切换：独立块，与 filters 分开，避免 filters 显隐导致布局抖动 -->

@@ -2,6 +2,7 @@ import { app, ipcMain, BrowserWindow, dialog } from 'electron'
 import fs from 'fs'
 import path from 'path'
 import { configManager } from './config'
+import { collectDirectoryEntries, writeZipFile, type ZipEntry } from './zip'
 
 export interface LogEntry {
   time: string
@@ -64,6 +65,53 @@ function formatLogForExport(entry: LogEntry): string {
   return `${line}\nDetails:\n${JSON.stringify(entry.details, null, 2)}`
 }
 
+function countFiles(dirPath: string): number {
+  if (!fs.existsSync(dirPath)) return 0
+
+  let count = 0
+  const names = fs.readdirSync(dirPath)
+  for (const name of names) {
+    const absolutePath = path.join(dirPath, name)
+    const stat = fs.lstatSync(absolutePath)
+    if (stat.isSymbolicLink()) continue
+    if (stat.isDirectory()) {
+      count += countFiles(absolutePath)
+    } else if (stat.isFile()) {
+      count += 1
+    }
+  }
+  return count
+}
+
+function readFileIfExists(filePath: string): string | undefined {
+  if (!fs.existsSync(filePath)) return undefined
+  return fs.readFileSync(filePath, 'utf-8')
+}
+
+function buildDiagnosticManifest(): Record<string, unknown> {
+  const crashDumpsPath = app.getPath('crashDumps')
+  const reportsPath = path.join(crashDumpsPath, 'reports')
+  const attachmentsPath = path.join(crashDumpsPath, 'attachments')
+
+  return {
+    generatedAt: new Date().toISOString(),
+    appVersion: app.getVersion(),
+    platform: process.platform,
+    arch: process.arch,
+    paths: {
+      userData: app.getPath('userData'),
+      logFile: LOG_FILE,
+      crashDumps: crashDumpsPath
+    },
+    files: {
+      logFileExists: fs.existsSync(LOG_FILE),
+      crashDumpsExists: fs.existsSync(crashDumpsPath),
+      crashReportsCount: countFiles(reportsPath),
+      crashAttachmentsCount: countFiles(attachmentsPath)
+    }
+  }
+}
+
 async function exportLogs(): Promise<{ success: boolean; filePath?: string; error?: string }> {
   try {
     const allLogs = readPersistedLogs()
@@ -73,14 +121,13 @@ async function exportLogs(): Promise<{ success: boolean; filePath?: string; erro
       .replace(/[-:]/g, '')
       .replace(/\..+$/, '')
       .replace('T', '-')
-    const defaultPath = path.join(app.getPath('downloads'), `cwe-print-logs-${stamp}.txt`)
+    const defaultPath = path.join(app.getPath('downloads'), `cwe-print-diagnostics-${stamp}.zip`)
 
     const result = await dialog.showSaveDialog({
-      title: '导出运行日志',
+      title: '导出诊断包',
       defaultPath,
       filters: [
-        { name: 'Text Log', extensions: ['txt'] },
-        { name: 'JSON Lines', extensions: ['jsonl'] }
+        { name: 'Zip Archive', extensions: ['zip'] }
       ]
     })
 
@@ -88,13 +135,41 @@ async function exportLogs(): Promise<{ success: boolean; filePath?: string; erro
       return { success: false, error: '已取消导出' }
     }
 
-    const ext = path.extname(result.filePath).toLowerCase()
-    const content =
-      ext === '.jsonl'
-        ? allLogs.map((entry) => JSON.stringify(entry)).join('\n')
-        : allLogs.map(formatLogForExport).join('\n')
-    fs.writeFileSync(result.filePath, content + (content ? '\n' : ''), 'utf-8')
-    return { success: true, filePath: result.filePath }
+    const logText = allLogs.map(formatLogForExport).join('\n')
+    const logJsonl = readFileIfExists(LOG_FILE) || allLogs.map((entry) => JSON.stringify(entry)).join('\n')
+    const markerPath = path.join(app.getPath('userData'), 'app-running.json')
+    const markerContent = readFileIfExists(markerPath)
+    const manifest = buildDiagnosticManifest()
+    const entries: ZipEntry[] = [
+      {
+        archivePath: 'manifest.json',
+        content: JSON.stringify(manifest, null, 2)
+      },
+      {
+        archivePath: 'logs/app.txt',
+        content: logText + (logText ? '\n' : '')
+      },
+      {
+        archivePath: 'logs/app.jsonl',
+        content: logJsonl + (logJsonl && !logJsonl.endsWith('\n') ? '\n' : '')
+      },
+      ...collectDirectoryEntries(app.getPath('crashDumps'), 'crashpad')
+    ]
+
+    if (markerContent) {
+      entries.push({
+        archivePath: 'runtime/app-running.json',
+        content: markerContent
+      })
+    }
+
+    const outputPath =
+      path.extname(result.filePath).toLowerCase() === '.zip'
+        ? result.filePath
+        : `${result.filePath}.zip`
+
+    writeZipFile(outputPath, entries)
+    return { success: true, filePath: outputPath }
   } catch (err) {
     return { success: false, error: (err as Error).message }
   }
