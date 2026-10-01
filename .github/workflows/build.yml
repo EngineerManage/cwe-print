@@ -167,6 +167,9 @@ jobs:
         with:
           path: artifacts
 
+      - name: Fix and validate Electron updater metadata
+        run: node scripts/fix-electron-updater-metadata.cjs artifacts
+
       - name: Publish to GitHub Release
         uses: softprops/action-gh-release@v2
         with:

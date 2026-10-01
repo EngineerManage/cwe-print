@@ -13,6 +13,7 @@ asarUnpack:
   - '**/*.{node,dll}'
 mac:
   icon: build/icon.png
+  artifactName: CWE-Print-${version}-mac-${arch}.${ext}
   target:
     - target: dmg
       arch:
@@ -30,7 +31,7 @@ mac:
     - NSDownloadsFolderUsageDescription: Application requests access to the user's Downloads folder.
 win:
   icon: build/icon.png
-  artifactName: ${productName}-${version}-win-${arch}.${ext}
+  artifactName: CWE-Print-${version}-win-${arch}.${ext}
   target:
     - target: nsis
       arch:
