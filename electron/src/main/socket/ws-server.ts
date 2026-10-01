@@ -12,7 +12,7 @@ export class WsServer {
 
   get status() {
     return {
-      running: this.server !== null,
+      running: this.isListening(),
       port: this.port,
       clients: this.clients.size
     }
@@ -25,7 +25,7 @@ export class WsServer {
   start(port: number): Promise<void> {
     return new Promise((resolve, reject) => {
       if (this.server) {
-        if (this.port === port) {
+        if (this.port === port && this.isListening()) {
           resolve()
           return
         }
@@ -38,55 +38,100 @@ export class WsServer {
 
   private doStart(port: number, resolve: () => void, reject: (err: Error) => void): void {
     this.server = new WebSocketServer({ port, host: '0.0.0.0' })
+    const server = this.server
 
-    this.server.on('connection', (ws) => {
+    server.on('connection', (ws, request) => {
       this.clients.add(ws)
-      logger.info('WebSocket 客户端已连接', 'ws')
+      const client = `${request.socket.remoteAddress || 'unknown'}:${request.socket.remotePort || '-'}`
+      logger.info(`WebSocket 客户端已连接: ${client}`, 'ws', {
+        client,
+        origin: request.headers.origin,
+        url: request.url,
+        userAgent: request.headers['user-agent']
+      })
 
       ws.on('message', async (data) => {
+        const text = data.toString()
         try {
-          const text = data.toString()
-          logger.info(`收到 WebSocket 消息，长度: ${text.length}`, 'ws')
+          logger.info(`收到 WebSocket 消息，长度: ${text.length}`, 'ws', { client })
           const cmd = JSON.parse(text) as PrintCommand
           if (cmd.type !== 'print') {
-            ws.send(JSON.stringify({ success: false, error: '未知指令类型' }))
+            logger.warn(`WebSocket 指令类型不支持: ${String(cmd.type)}`, 'ws', {
+              client,
+              commandId: cmd.id
+            })
+            this.safeSend(ws, JSON.stringify({ success: false, error: '未知指令类型' }))
             return
           }
-          logger.info(`收到打印指令: ${cmd.id}, 格式: ${cmd.format}`, 'ws')
+          logger.info(`收到打印指令: ${cmd.id}, 格式: ${cmd.format}`, 'ws', { client })
           const result = this.handler ? await this.handler(cmd, ws) : { success: false, error: '未设置处理器' }
           const failed = typeof result === 'object' && result !== null && 'status' in result && result.status === 'failed'
-          ws.send(JSON.stringify({
+          this.safeSend(ws, JSON.stringify({
             success: !failed,
             result,
             error: failed && 'error' in result ? result.error : undefined
           }))
         } catch (err) {
-          logger.error(`解析指令失败: ${(err as Error).message}`, 'ws')
-          ws.send(JSON.stringify({ success: false, error: '指令格式错误' }))
+          logger.error(`解析 WebSocket 指令失败: ${(err as Error).message}`, 'ws', {
+            client,
+            length: text.length,
+            preview: text.slice(0, 300)
+          })
+          this.safeSend(ws, JSON.stringify({ success: false, error: '指令格式错误' }))
         }
       })
 
-      ws.on('close', () => {
+      ws.on('close', (code, reason) => {
         this.clients.delete(ws)
-        logger.info('WebSocket 客户端已断开', 'ws')
+        logger.info(`WebSocket 客户端已断开: ${client}`, 'ws', {
+          client,
+          code,
+          reason: reason.toString()
+        })
       })
 
       ws.on('error', (err) => {
-        logger.error(`WebSocket 客户端错误: ${err.message}`, 'ws')
+        logger.error(`WebSocket 客户端错误: ${err.message}`, 'ws', { client })
         this.clients.delete(ws)
       })
     })
 
-    this.server.on('error', (err) => {
+    server.on('error', (err) => {
       logger.error(`WebSocket 服务错误: ${err.message}`, 'ws')
+      if (this.server === server && !this.isListening()) {
+        this.server = null
+        this.port = 0
+      }
       reject(err)
     })
 
-    this.server.on('listening', () => {
+    server.on('close', () => {
+      if (this.server === server) {
+        this.server = null
+        this.port = 0
+      }
+    })
+
+    server.on('listening', () => {
       this.port = port
-      logger.info(`WebSocket 服务已启动，端口: ${port}`, 'ws')
+      logger.info(`WebSocket 服务已启动，端口: ${port}`, 'ws', {
+        address: server.address()
+      })
       resolve()
     })
+  }
+
+  private isListening(): boolean {
+    return this.server !== null && this.server.address() !== null
+  }
+
+  private safeSend(ws: WebSocket, data: string): void {
+    if (ws.readyState !== 1) return
+    try {
+      ws.send(data)
+    } catch (err) {
+      logger.error(`WebSocket 响应发送失败: ${(err as Error).message}`, 'ws')
+    }
   }
 
   stop(): Promise<void> {

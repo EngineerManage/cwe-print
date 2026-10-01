@@ -49,6 +49,7 @@ export class TcpServer {
   private port = 0
   private clients = new Set<Socket>()
   private handler: CommandHandler | null = null
+  private readonly maxBufferSize = 1024 * 1024
 
   get status() {
     return {
@@ -84,13 +85,43 @@ export class TcpServer {
       let buffer = ''
       socket.on('data', (data) => {
         buffer += data.toString('utf-8')
+
+        if (buffer.length > this.maxBufferSize) {
+          logger.error(`TCP 接收缓冲区超过限制，已断开客户端: ${socket.remoteAddress}:${socket.remotePort}`, 'tcp')
+          socket.write(JSON.stringify({ success: false, error: '指令数据过大或缺少分隔符' }) + '\n')
+          socket.destroy()
+          return
+        }
+
         // 支持换行分隔的 JSON 指令
         const lines = buffer.split('\n')
         buffer = lines.pop() || ''
         for (const line of lines) {
           if (!line.trim()) continue
-          this.handleLine(line.trim(), socket)
+          this.handleRawMessage(line.trim(), socket)
         }
+
+        // 兼容只发送单条完整 JSON、但没有追加换行符的客户端。
+        if (buffer.trim() && this.tryHandleCompleteJson(buffer, socket)) {
+          buffer = ''
+        }
+      })
+
+      socket.on('end', () => {
+        const pending = buffer.trim()
+        if (!pending) return
+
+        if (this.tryHandleCompleteJson(pending, socket)) {
+          buffer = ''
+          return
+        }
+
+        logger.warn(
+          `TCP 客户端关闭连接时仍有未解析数据，可能缺少换行符或 JSON 不完整，长度: ${pending.length}`,
+          'tcp'
+        )
+        socket.write(JSON.stringify({ success: false, error: '指令格式错误或缺少换行分隔符' }) + '\n')
+        buffer = ''
       })
 
       socket.on('close', () => {
@@ -116,10 +147,20 @@ export class TcpServer {
     })
   }
 
-  private async handleLine(line: string, socket: Socket): Promise<void> {
+  private tryHandleCompleteJson(raw: string, socket: Socket): boolean {
     try {
-      logger.info(`收到 TCP 消息，长度: ${line.length}`, 'tcp')
-      const cmd = JSON.parse(line) as PrintCommand
+      JSON.parse(raw)
+      this.handleRawMessage(raw.trim(), socket)
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  private async handleRawMessage(raw: string, socket: Socket): Promise<void> {
+    try {
+      logger.info(`收到 TCP 消息，长度: ${raw.length}`, 'tcp')
+      const cmd = JSON.parse(raw) as PrintCommand
       if (cmd.type !== 'print') {
         socket.write(JSON.stringify({ success: false, error: '未知指令类型' }) + '\n')
         return
