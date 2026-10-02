@@ -1,4 +1,4 @@
-import { BrowserWindow } from 'electron'
+import { BrowserWindow, dialog } from 'electron'
 import { configManager } from './config'
 import { logger } from './logger'
 import { TcpServer } from '../socket/tcp-server'
@@ -7,11 +7,18 @@ import { handlePrintCommand } from '../print/engine'
 import { printQueue } from '../print/queue'
 import type { ServiceStatus } from '../../preload'
 
+interface ServiceStartupFailure {
+  serviceName: 'TCP' | 'WebSocket'
+  port: number
+  error: Error
+}
+
 class ServiceManager {
   private tcpServer = new TcpServer()
   private wsServer = new WsServer()
   private statusTimer: NodeJS.Timeout | null = null
   private desiredRunning = false
+  private startupErrorDialogVisible = false
 
   constructor() {
     this.tcpServer.onCommand(async (cmd) => handlePrintCommand(cmd))
@@ -38,15 +45,25 @@ class ServiceManager {
     this.desiredRunning = true
     this.startStatusTimer()
     const config = configManager.get()
+    const failures: ServiceStartupFailure[] = []
+
     await Promise.all([
       this.tcpServer.start(config.tcpPort).catch((err) => {
-        logger.error(`TCP 服务启动失败: ${err.message}`, 'service')
+        const error = this.toError(err)
+        logger.error(`TCP 服务启动失败: ${error.message}`, 'service')
+        failures.push({ serviceName: 'TCP', port: config.tcpPort, error })
       }),
       this.wsServer.start(config.wsPort).catch((err) => {
-        logger.error(`WebSocket 服务启动失败: ${err.message}`, 'service')
+        const error = this.toError(err)
+        logger.error(`WebSocket 服务启动失败: ${error.message}`, 'service')
+        failures.push({ serviceName: 'WebSocket', port: config.wsPort, error })
       })
     ])
     this.broadcastStatus()
+
+    if (failures.length > 0) {
+      await this.showStartupFailureDialog(failures)
+    }
   }
 
   private startStatusTimer(): void {
@@ -87,7 +104,9 @@ class ServiceManager {
       logger.info(`TCP 服务已重启，新端口: ${port}`, 'service')
       this.broadcastStatus()
     } catch (err) {
-      logger.error(`TCP 服务重启失败: ${(err as Error).message}`, 'service')
+      const error = this.toError(err)
+      logger.error(`TCP 服务重启失败: ${error.message}`, 'service')
+      await this.showStartupFailureDialog([{ serviceName: 'TCP', port, error }])
     }
   }
 
@@ -98,7 +117,9 @@ class ServiceManager {
       logger.info(`WebSocket 服务已重启，新端口: ${port}`, 'service')
       this.broadcastStatus()
     } catch (err) {
-      logger.error(`WebSocket 服务重启失败: ${(err as Error).message}`, 'service')
+      const error = this.toError(err)
+      logger.error(`WebSocket 服务重启失败: ${error.message}`, 'service')
+      await this.showStartupFailureDialog([{ serviceName: 'WebSocket', port, error }])
     }
   }
 
@@ -115,6 +136,67 @@ class ServiceManager {
     BrowserWindow.getAllWindows().forEach((win) => {
       win.webContents.send('service:statusChanged', status)
     })
+  }
+
+  private toError(err: unknown): Error {
+    if (err instanceof Error) return err
+    return new Error(String(err))
+  }
+
+  private getStartupFailureReason({ serviceName, port, error }: ServiceStartupFailure): string {
+    const code = (error as NodeJS.ErrnoException).code
+
+    if (code === 'EADDRINUSE') {
+      return `${serviceName} 服务启动失败：端口 ${port} 已被占用。请关闭占用该端口的程序，或在服务设置中修改端口后重试。`
+    }
+
+    if (code === 'EACCES' || code === 'EPERM') {
+      return `${serviceName} 服务启动失败：没有权限监听端口 ${port}。请更换端口，或使用具备端口监听权限的方式启动应用。`
+    }
+
+    if (code === 'EADDRNOTAVAIL') {
+      return `${serviceName} 服务启动失败：当前设备无法监听端口 ${port} 对应的网络地址。请检查网络配置后重试。`
+    }
+
+    return `${serviceName} 服务启动失败：${error.message || '未知错误'}`
+  }
+
+  private async showStartupFailureDialog(failures: ServiceStartupFailure[]): Promise<void> {
+    if (this.startupErrorDialogVisible) return
+
+    this.startupErrorDialogVisible = true
+    const detail = failures
+      .map((failure) => {
+        const code = (failure.error as NodeJS.ErrnoException).code
+        const technicalMessage = code
+          ? `原始错误：${code} ${failure.error.message}`
+          : `原始错误：${failure.error.message}`
+
+        return `${this.getStartupFailureReason(failure)}\n${technicalMessage}`
+      })
+      .join('\n\n')
+
+    try {
+      const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0]
+      const options = {
+        type: 'error' as const,
+        title: '打印服务启动失败',
+        message: '打印服务启动失败',
+        detail,
+        buttons: ['确定'],
+        defaultId: 0,
+        cancelId: 0,
+        noLink: true
+      }
+
+      if (win && !win.isDestroyed()) {
+        await dialog.showMessageBox(win, options)
+      } else {
+        await dialog.showMessageBox(options)
+      }
+    } finally {
+      this.startupErrorDialogVisible = false
+    }
   }
 
   async stop(): Promise<void> {

@@ -446,7 +446,7 @@ function toCupsMedia(paperSize: PrintCommand['paperSize']): string {
 /**
  * 构建打印用的 HTML，注入 @page CSS 和绝对定位
  */
-function buildPrintHtml(task: PrintTask): string {
+export function buildPrintHtml(task: PrintCommand): string {
   const paperSize = task.paperSize
   const margins = getEffectiveMargins(task)
 
@@ -594,7 +594,7 @@ function mmToInches(value: number): number {
   return value / 25.4
 }
 
-function getEffectiveMargins(task: PrintTask): NonNullable<PrintCommand['margins']> {
+function getEffectiveMargins(task: PrintCommand): NonNullable<PrintCommand['margins']> {
   if (task.margins) return task.margins
 
   return DEFAULT_MARGINS

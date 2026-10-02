@@ -5,9 +5,10 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { configManager } from './utils/config'
 import { logger } from './utils/logger'
 import { serviceManager } from './utils/service-manager'
-import { handlePrintCommand } from './print/engine'
+import { buildPrintHtml, handlePrintCommand } from './print/engine'
 import { printQueue, type PrintTask } from './print/queue'
 import type { PrintCommand } from './socket/tcp-server'
+import { buildPreviewCommand, getPreviewPageSize, parseDebugPrintCommand } from './print/debug-command'
 import { checkForUpdatesOnStartup, initAutoUpdater, isUpdateInstalling } from './utils/updater'
 import icon from '../../build/icon.png?asset'
 
@@ -337,29 +338,53 @@ ipcMain.handle('print:reprint', (_event, taskId: string) => {
 
 ipcMain.handle(
   'print:debug',
-  async (_event, payload: Pick<PrintCommand, 'format' | 'content'>) => {
+  async (_event, payload: Partial<PrintCommand>) => {
     if (!is.dev) {
       return { success: false, error: '调试打印只允许在本地 dev 环境使用' }
     }
 
-    if (payload.format === 'escpos') {
+    const command = parseDebugPrintCommand(payload.content || '', payload)
+    if (!command) {
+      return { success: false, error: '请输入打印内容，或粘贴包含 printTask/printCommand 的日志内容' }
+    }
+
+    if (command.format === 'escpos') {
       return { success: false, error: '小票机打印暂未实现' }
-    }
-
-    if (!payload.content.trim()) {
-      return { success: false, error: '请输入打印内容' }
-    }
-
-    const command: PrintCommand = {
-      id: `debug-${Date.now()}`,
-      type: 'print',
-      format: payload.format,
-      content: payload.content
     }
 
     try {
       const result = await handlePrintCommand(command)
       return { success: result.status === 'success', ...result }
+    } catch (err) {
+      return { success: false, error: (err as Error).message }
+    }
+  }
+)
+
+ipcMain.handle(
+  'print:debug-preview',
+  async (_event, payload: Partial<PrintCommand>) => {
+    if (!is.dev) {
+      return { success: false, error: '调试预览只允许在本地 dev 环境使用' }
+    }
+
+    const command = parseDebugPrintCommand(payload.content || '', payload)
+    if (!command) {
+      return { success: false, error: '未能从内容中解析出可预览的打印任务' }
+    }
+
+    try {
+      const previewCommand = buildPreviewCommand(command)
+      if (!previewCommand) {
+        return { success: false, error: `暂不支持预览 ${command.format} 格式` }
+      }
+
+      return {
+        success: true,
+        command,
+        previewHtml: buildPrintHtml(previewCommand),
+        pageSize: getPreviewPageSize(previewCommand)
+      }
     } catch (err) {
       return { success: false, error: (err as Error).message }
     }

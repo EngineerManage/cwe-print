@@ -137,6 +137,10 @@ export class TcpServer {
 
     this.server.on('error', (err) => {
       logger.error(`TCP 服务错误: ${err.message}`, 'tcp')
+      if (this.server && !this.server.listening) {
+        this.server = null
+        this.port = 0
+      }
       reject(err)
     })
 

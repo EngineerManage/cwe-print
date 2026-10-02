@@ -20,6 +20,7 @@ export interface Api {
   getPrintTasks: () => Promise<PrintTask[]>
   reprintTask: (taskId: string) => Promise<{ success: boolean; error?: string }>
   debugPrint: (payload: DebugPrintPayload) => Promise<DebugPrintResult>
+  debugPreview: (payload: DebugPrintPayload) => Promise<DebugPreviewResult>
   onPrintQueueChange: (callback: () => void) => () => void
 
   // 日志
@@ -73,8 +74,17 @@ export interface PrintTask {
 export type PrintFormat = 'pdf' | 'html' | 'image' | 'escpos' | 'ecpay'
 
 export interface DebugPrintPayload {
+  id?: string
+  type?: 'print'
   format: PrintFormat
   content: string
+  printer?: string
+  copies?: number
+  paperSize?: unknown
+  margins?: unknown
+  position?: unknown
+  blocks?: unknown
+  options?: Record<string, unknown>
 }
 
 export interface DebugPrintResult {
@@ -82,6 +92,14 @@ export interface DebugPrintResult {
   taskId?: string
   status?: string
   outputPath?: string
+  error?: string
+}
+
+export interface DebugPreviewResult {
+  success: boolean
+  command?: DebugPrintPayload
+  previewHtml?: string
+  pageSize?: { width: number; height: number; unit: 'mm' }
   error?: string
 }
 
@@ -131,6 +149,7 @@ const api: Api = {
   getPrintTasks: () => ipcRenderer.invoke('queue:tasks'),
   reprintTask: (taskId) => ipcRenderer.invoke('print:reprint', taskId),
   debugPrint: (payload) => ipcRenderer.invoke('print:debug', payload),
+  debugPreview: (payload) => ipcRenderer.invoke('print:debug-preview', payload),
   onPrintQueueChange: (callback) => {
     const handler = () => callback()
     ipcRenderer.on('queue:changed', handler)
