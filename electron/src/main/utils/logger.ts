@@ -92,6 +92,8 @@ function buildDiagnosticManifest(): Record<string, unknown> {
   const crashDumpsPath = app.getPath('crashDumps')
   const reportsPath = path.join(crashDumpsPath, 'reports')
   const attachmentsPath = path.join(crashDumpsPath, 'attachments')
+  const generatedHtmlPath = path.join(app.getPath('userData'), 'generated-html')
+  const generatedPdfPath = path.join(app.getPath('userData'), 'generated-pdf')
 
   return {
     generatedAt: new Date().toISOString(),
@@ -101,13 +103,17 @@ function buildDiagnosticManifest(): Record<string, unknown> {
     paths: {
       userData: app.getPath('userData'),
       logFile: LOG_FILE,
-      crashDumps: crashDumpsPath
+      crashDumps: crashDumpsPath,
+      generatedHtml: generatedHtmlPath,
+      generatedPdf: generatedPdfPath
     },
     files: {
       logFileExists: fs.existsSync(LOG_FILE),
       crashDumpsExists: fs.existsSync(crashDumpsPath),
       crashReportsCount: countFiles(reportsPath),
-      crashAttachmentsCount: countFiles(attachmentsPath)
+      crashAttachmentsCount: countFiles(attachmentsPath),
+      generatedHtmlCount: countFiles(generatedHtmlPath),
+      generatedPdfCount: countFiles(generatedPdfPath)
     }
   }
 }
@@ -153,6 +159,8 @@ async function exportLogs(): Promise<{ success: boolean; filePath?: string; erro
         archivePath: 'logs/app.jsonl',
         content: logJsonl + (logJsonl && !logJsonl.endsWith('\n') ? '\n' : '')
       },
+      ...collectDirectoryEntries(path.join(app.getPath('userData'), 'generated-html'), 'generated-html'),
+      ...collectDirectoryEntries(path.join(app.getPath('userData'), 'generated-pdf'), 'generated-pdf'),
       ...collectDirectoryEntries(app.getPath('crashDumps'), 'crashpad')
     ]
 

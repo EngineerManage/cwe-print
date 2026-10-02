@@ -10,8 +10,11 @@ import { printQueue } from './queue'
 import type { PrintTask } from './queue'
 import type { PrintCommand, PrintBlock } from '../socket/tcp-server'
 import { getPaperDimensions, toElectronPageSize, DEFAULT_MARGINS } from './paper-sizes'
+import { cleanupDirectoryFiles } from '../utils/file-retention'
 
 const ECPAY_ZERO_MARGINS = { top: 0, left: 0, right: 0, bottom: 0 }
+const GENERATED_FILE_MAX_AGE_MS = 5 * 24 * 60 * 60 * 1000
+const GENERATED_FILE_MAX_COUNT = 300
 
 export async function handlePrintCommand(cmd: PrintCommand): Promise<{ taskId: string; status: string; outputPath?: string; error?: string }> {
   const task = printQueue.enqueue(cmd)
@@ -84,6 +87,8 @@ async function printHtml(task: PrintTask): Promise<string> {
   try {
     // 构建带纸张尺寸和边距控制的包装 HTML
     const wrappedHtml = buildPrintHtml(task)
+    const htmlPaths = await saveHtmlDebugFiles(task, wrappedHtml)
+    logger.info(`HTML 调试文件已保存: ${htmlPaths.rawPath}, ${htmlPaths.wrappedPath}`, 'engine', htmlPaths)
 
     await win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(wrappedHtml)}`)
 
@@ -93,6 +98,7 @@ async function printHtml(task: PrintTask): Promise<string> {
     const pdfOptions = buildElectronPdfOptions(task)
     const pdf = await win.webContents.printToPDF(pdfOptions)
     await fs.writeFile(pdfPath, pdf)
+    await cleanupGeneratedFiles(path.dirname(pdfPath), 'PDF', [pdfPath])
     logger.info(`HTML 已转换为 PDF: ${pdfPath}`, 'engine')
 
     await printPdfFile(pdfPath, task)
@@ -246,6 +252,7 @@ async function printEcpayImage(task: PrintTask, imageDataUrl: string): Promise<s
     const pdfPath = await createPdfOutputPath(task)
     const pdf = await win.webContents.printToPDF(buildElectronPdfOptions(task))
     await fs.writeFile(pdfPath, pdf)
+    await cleanupGeneratedFiles(path.dirname(pdfPath), 'PDF', [pdfPath])
     logger.info(`绿界发票图片 PDF 已生成: ${pdfPath}`, 'engine')
 
     if (process.platform === 'win32') {
@@ -600,6 +607,38 @@ async function createPdfOutputPath(task: PrintTask): Promise<string> {
   const timestamp = Date.now()
   const taskId = sanitizeFilename(task.id)
   return path.join(dir, `${timestamp}-${taskId}.pdf`)
+}
+
+async function saveHtmlDebugFiles(task: PrintTask, wrappedHtml: string): Promise<{ rawPath: string; wrappedPath: string }> {
+  const dir = path.join(app.getPath('userData'), 'generated-html')
+  await fs.mkdir(dir, { recursive: true })
+  await cleanupGeneratedFiles(dir, 'HTML')
+
+  const timestamp = Date.now()
+  const taskId = sanitizeFilename(task.id)
+  const rawPath = path.join(dir, `${timestamp}-${taskId}.raw.html`)
+  const wrappedPath = path.join(dir, `${timestamp}-${taskId}.wrapped.html`)
+
+  await fs.writeFile(rawPath, task.content || '', 'utf-8')
+  await fs.writeFile(wrappedPath, wrappedHtml, 'utf-8')
+  await cleanupGeneratedFiles(dir, 'HTML', [rawPath, wrappedPath])
+
+  return { rawPath, wrappedPath }
+}
+
+async function cleanupGeneratedFiles(dir: string, label: string, keepPaths: string[] = []): Promise<void> {
+  try {
+    const deleted = await cleanupDirectoryFiles(dir, {
+      maxAgeMs: GENERATED_FILE_MAX_AGE_MS,
+      maxFiles: GENERATED_FILE_MAX_COUNT,
+      keepPaths
+    })
+    if (deleted > 0) {
+      logger.info(`已清理 ${label} 调试文件: ${deleted} 个`, 'engine', { dir, deleted })
+    }
+  } catch (err) {
+    logger.warn(`清理 ${label} 调试文件失败: ${(err as Error).message}`, 'engine', { dir })
+  }
 }
 
 function sanitizeFilename(value: string): string {
