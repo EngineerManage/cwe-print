@@ -101,7 +101,11 @@ async function printHtml(task: PrintTask): Promise<string> {
     await cleanupGeneratedFiles(path.dirname(pdfPath), 'PDF', [pdfPath])
     logger.info(`HTML 已转换为 PDF: ${pdfPath}`, 'engine')
 
-    await printPdfFile(pdfPath, task)
+    if (process.platform === 'win32') {
+      await printBrowserWindow(win, task, 'HTML')
+    } else {
+      await printPdfFile(pdfPath, task)
+    }
     return pdfPath
   } finally {
     win.destroy()
@@ -498,13 +502,22 @@ export function buildPrintHtml(task: PrintCommand): string {
 <style>
 ${paperCss}
 * { box-sizing: border-box; }
-html, body { margin: 0; padding: 0; }
+html, body {
+  margin: 0;
+  padding: 0;
+  background: #fff;
+  color: #000;
+}
 body {
   ${bodyCss}
   overflow: hidden;
+  background: #fff;
+  color: #000;
 }
 .print-block {
   overflow: hidden;
+  background: #fff;
+  color: #000;
 }
 @media print {
   body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
@@ -525,6 +538,7 @@ function buildElectronPrintOptions(task: PrintTask): Record<string, unknown> {
   const options: Record<string, unknown> = {
     silent: true,
     printBackground: true,
+    color: true,
     copies: task.copies || 1
   }
 
