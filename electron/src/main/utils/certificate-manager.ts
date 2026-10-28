@@ -16,7 +16,7 @@ const CA_CERT_FILE = 'cwe-print-local-ca.crt'
 const SERVER_KEY_FILE = 'cwe-print-localhost.key'
 const SERVER_CERT_FILE = 'cwe-print-localhost.crt'
 const METADATA_FILE = 'metadata.json'
-const CA_COMMON_NAME = 'CWE Print Local CA'
+const CA_COMMON_NAME = '卡挖易 CA'
 const SERVER_COMMON_NAME = 'localhost'
 const SERVER_RENEW_BEFORE_DAYS = 30
 
@@ -45,10 +45,28 @@ class CertificateManager {
   private serverCertPath = path.join(this.certDir, SERVER_CERT_FILE)
   private metadataPath = path.join(this.certDir, METADATA_FILE)
   private cached: LocalTlsCertificate | null = null
+  private initializationPromise: Promise<LocalTlsCertificate> | null = null
+  private trustPromise: Promise<{ trusted: boolean; error?: string }> | null = null
 
   async ensureLocalTlsCertificate(): Promise<LocalTlsCertificate> {
     if (this.cached) return this.cached
 
+    if (!this.initializationPromise) {
+      this.initializationPromise = this.initializeLocalTlsCertificate()
+    }
+
+    const initializationPromise = this.initializationPromise
+    try {
+      return await initializationPromise
+    } catch (err) {
+      if (this.initializationPromise === initializationPromise) {
+        this.initializationPromise = null
+      }
+      throw err
+    }
+  }
+
+  private async initializeLocalTlsCertificate(): Promise<LocalTlsCertificate> {
     this.ensureCertDir()
     await this.ensureCertificateFiles()
 
@@ -59,7 +77,10 @@ class CertificateManager {
     let trustError = metadata.trustError
 
     if (!trusted) {
-      const trustResult = await this.trustCaCertificate()
+      // Windows displays a system confirmation for this operation. Reuse the
+      // first attempt for the entire app session so concurrent service starts
+      // cannot open multiple certificate dialogs.
+      const trustResult = await this.trustCaCertificateOnce()
       trusted = trustResult.trusted
       trustError = trustResult.error
       this.writeMetadata({
@@ -81,6 +102,13 @@ class CertificateManager {
     }
 
     return this.cached
+  }
+
+  private trustCaCertificateOnce(): Promise<{ trusted: boolean; error?: string }> {
+    if (!this.trustPromise) {
+      this.trustPromise = this.trustCaCertificate()
+    }
+    return this.trustPromise
   }
 
   private ensureCertDir(): void {
@@ -106,7 +134,15 @@ class CertificateManager {
 
     try {
       const caCert = new X509Certificate(fs.readFileSync(this.caCertPath, 'utf-8'))
-      return caCert.ca && this.daysUntil(caCert.validTo) > SERVER_RENEW_BEFORE_DAYS
+      const commonName = caCert.subject
+        .split(/\r?\n/)
+        .find((attribute) => attribute.startsWith('CN='))
+
+      return (
+        commonName === `CN=${CA_COMMON_NAME}` &&
+        caCert.ca &&
+        this.daysUntil(caCert.validTo) > SERVER_RENEW_BEFORE_DAYS
+      )
     } catch {
       return false
     }
