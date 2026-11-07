@@ -11,6 +11,7 @@ import type { PrintTask } from './queue'
 import type { PrintCommand, PrintBlock } from '../socket/tcp-server'
 import { getPaperDimensions, toElectronPageSize, DEFAULT_MARGINS } from './paper-sizes'
 import { cleanupDirectoryFiles } from '../utils/file-retention'
+import { HTML_PRINT_BATCH_SIZE, splitHtmlPrintContent } from './html-batching'
 
 const ECPAY_ZERO_MARGINS = { top: 0, left: 0, right: 0, bottom: 0 }
 const GENERATED_FILE_MAX_AGE_MS = 5 * 24 * 60 * 60 * 1000
@@ -78,6 +79,19 @@ async function printPdf(task: PrintTask): Promise<string> {
 async function printHtml(task: PrintTask): Promise<string> {
   logger.info(`开始打印 HTML: ${task.id}, 纸张: ${formatPaperSize(task.paperSize)}`, 'engine')
 
+  const contentBatches = task.blocks && task.blocks.length > 0
+    ? [task.content]
+    : splitHtmlPrintContent(task.content, HTML_PRINT_BATCH_SIZE)
+  const batchCount = contentBatches.length
+
+  if (batchCount > 1) {
+    logger.info(
+      `HTML 打印任务已拆分: ${task.id}, 共 ${batchCount} 批, 每批最多 ${HTML_PRINT_BATCH_SIZE} 条`,
+      'engine',
+      { taskId: task.id, batchCount, batchSize: HTML_PRINT_BATCH_SIZE }
+    )
+  }
+
   const win = new BrowserWindow({
     width: 800,
     height: 600,
@@ -85,31 +99,62 @@ async function printHtml(task: PrintTask): Promise<string> {
   })
 
   try {
-    // 构建带纸张尺寸和边距控制的包装 HTML
-    const wrappedHtml = buildPrintHtml(task)
-    const htmlPaths = await saveHtmlDebugFiles(task, wrappedHtml)
-    logger.info(`HTML 调试文件已保存: ${htmlPaths.rawPath}, ${htmlPaths.wrappedPath}`, 'engine', htmlPaths)
+    let lastPdfPath = ''
 
-    await win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(wrappedHtml)}`)
+    for (let index = 0; index < batchCount; index += 1) {
+      const batchNumber = index + 1
+      const batchTask: PrintTask = batchCount === 1
+        ? task
+        : {
+            ...task,
+            id: buildBatchTaskId(task.id, batchNumber, batchCount),
+            content: contentBatches[index]
+          }
 
-    await waitForRenderReady(win)
+      try {
+        if (batchCount > 1) {
+          logger.info(`开始处理 HTML 打印批次: ${task.id}, ${batchNumber}/${batchCount}`, 'engine', {
+            taskId: task.id,
+            batchNumber,
+            batchCount
+          })
+        }
 
-    const pdfPath = await createPdfOutputPath(task)
-    const pdfOptions = buildElectronPdfOptions(task)
-    const pdf = await win.webContents.printToPDF(pdfOptions)
-    await fs.writeFile(pdfPath, pdf)
-    await cleanupGeneratedFiles(path.dirname(pdfPath), 'PDF', [pdfPath])
-    logger.info(`HTML 已转换为 PDF: ${pdfPath}`, 'engine')
+        const wrappedHtml = buildPrintHtml(batchTask)
+        const htmlPaths = await saveHtmlDebugFiles(batchTask, wrappedHtml)
+        logger.info(`HTML 调试文件已保存: ${htmlPaths.rawPath}, ${htmlPaths.wrappedPath}`, 'engine', htmlPaths)
 
-    if (process.platform === 'win32') {
-      await printBrowserWindow(win, task, 'HTML')
-    } else {
-      await printPdfFile(pdfPath, task)
+        await win.loadFile(htmlPaths.wrappedPath)
+        await waitForRenderReady(win)
+
+        const pdfPath = await createPdfOutputPath(batchTask)
+        const pdfOptions = buildElectronPdfOptions(batchTask)
+        const pdf = await win.webContents.printToPDF(pdfOptions)
+        await fs.writeFile(pdfPath, pdf)
+        await cleanupGeneratedFiles(path.dirname(pdfPath), 'PDF', [pdfPath])
+        logger.info(`HTML 已转换为 PDF: ${pdfPath}`, 'engine')
+
+        if (process.platform === 'win32') {
+          await printBrowserWindow(win, batchTask, 'HTML')
+        } else {
+          await printPdfFile(pdfPath, batchTask)
+        }
+        lastPdfPath = pdfPath
+      } catch (err) {
+        if (batchCount === 1) throw err
+        throw new Error(`HTML 打印批次 ${batchNumber}/${batchCount} 失败: ${(err as Error).message}`)
+      }
     }
-    return pdfPath
+
+    return lastPdfPath
   } finally {
     win.destroy()
   }
+}
+
+function buildBatchTaskId(taskId: string, batchNumber: number, batchCount: number): string {
+  const suffix = `-batch-${batchNumber}-of-${batchCount}`
+  return `${taskId.slice(0, Math.max(1, 80 - suffix.length))}${suffix}`
 }
 
 async function waitForRenderReady(win: BrowserWindow): Promise<void> {

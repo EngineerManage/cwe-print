@@ -89,7 +89,7 @@ class ServiceManager {
       })
     }
 
-    if (!status.ws.running) {
+    if (!status.ws.running || !status.wss.running) {
       logger.warn(`检测到 WebSocket 服务未运行，尝试自动重启，端口: ${config.wsPort}`, 'service')
       this.wsServer.start(config.wsPort).catch((err) => {
         logger.error(`WebSocket 服务自动重启失败: ${err.message}`, 'service')
@@ -126,7 +126,8 @@ class ServiceManager {
   getStatus(): ServiceStatus {
     return {
       tcp: this.tcpServer.status,
-      ws: this.wsServer.status,
+      ws: this.wsServer.status.ws,
+      wss: this.wsServer.status.wss,
       printQueue: printQueue.stats
     }
   }

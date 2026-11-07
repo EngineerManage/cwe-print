@@ -316,7 +316,11 @@ function normalizeWindowsPrinterStatus(status: number): number {
   return PRINTER_STATUS_UNKNOWN
 }
 
-ipcMain.handle('queue:tasks', () => printQueue.all)
+ipcMain.handle('queue:tasks', () => printQueue.all.map((task) => ({
+  ...task,
+  content: '',
+  blocks: undefined
+})))
 
 ipcMain.handle('print:reprint', (_event, taskId: string) => {
   // 从队列历史中找到原任务，提取原始打印指令后重新入队。

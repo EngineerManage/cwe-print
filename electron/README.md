@@ -52,12 +52,14 @@ cwe-print/
 ### 1. 可配置端口 + 服务自动重启
 
 - **TCP Socket 端口**：默认 `9527`，Web 系统通过 TCP 长连接发送 JSON 打印指令
-- **WebSocket 端口**：默认 `9528`，支持浏览器端双向通信
+- **WebSocket 端口**：默认 `9528`，同一端口同时支持 `ws://127.0.0.1:9528` 和 `wss://localhost:9528` 双向通信
 - **自动重启**：在设置页面修改端口后点击保存，`ConfigManager` 触发 `restart:tcp` / `restart:ws` 事件，`ServiceManager` 自动**先停止旧服务，再启动新端口监听**，无需关闭软件
+- **本地证书**：首次启动时自动生成本地 CA 与 localhost 服务证书，并尝试写入当前用户系统信任库，避免客户手工导入证书
 
 相关代码：
 - `src/main/utils/config.ts:43`
 - `src/main/utils/service-manager.ts:28`
+- `src/main/utils/certificate-manager.ts`
 
 ### 2. 通信协议
 
@@ -78,7 +80,7 @@ Web 系统通过 TCP 或 WebSocket 发送 JSON 格式的打印指令：
 ```
 
 - **TCP**：每条 JSON 以换行符 `\n` 分隔
-- **WebSocket**：直接发送 JSON 字符串
+- **WebSocket**：`ws://127.0.0.1:9528` 或 `wss://localhost:9528` 直接发送 JSON 字符串
 - **响应**：`{"success": true, "result": {"taskId": "xxx", "status": "pending"}}`
 
 ### 3. 打印引擎
@@ -109,7 +111,7 @@ Web 系统通过 TCP 或 WebSocket 发送 JSON 格式的打印指令：
 
 ### 5. 桌面界面
 
-- **状态监控**：TCP / WebSocket 服务状态、在线客户端数、打印队列统计、系统打印机列表
+- **状态监控**：TCP / WS / WSS 服务状态、在线客户端数、WSS 证书信任状态、打印队列统计、系统打印机列表
 - **服务设置**：端口配置、日志级别、开机自启动、默认打印机
 - **运行日志**：实时滚动日志，支持按级别/来源过滤，深色终端风格
 

@@ -28,12 +28,22 @@ class ConfigManager extends EventEmitter {
       if (fs.existsSync(this.configPath)) {
         const raw = fs.readFileSync(this.configPath, 'utf-8')
         const parsed = JSON.parse(raw) as Partial<AppConfig>
-        return { ...DEFAULT_CONFIG, ...parsed }
+        return this.normalize({ ...DEFAULT_CONFIG, ...parsed })
       }
     } catch (err) {
       console.error('加载配置失败:', err)
     }
     return { ...DEFAULT_CONFIG }
+  }
+
+  private normalize(config: AppConfig): AppConfig {
+    return {
+      tcpPort: config.tcpPort,
+      wsPort: config.wsPort,
+      autoStart: config.autoStart,
+      defaultPrinter: config.defaultPrinter,
+      logLevel: config.logLevel
+    }
   }
 
   private save(): void {
@@ -62,7 +72,7 @@ class ConfigManager extends EventEmitter {
       this.emit('restart:tcp', partial.tcpPort)
     }
     if (partial.wsPort !== undefined && partial.wsPort !== oldWsPort) {
-      this.emit('restart:ws', partial.wsPort)
+      this.emit('restart:ws', this.config.wsPort)
     }
 
     return this.get()

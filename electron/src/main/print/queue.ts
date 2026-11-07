@@ -11,6 +11,17 @@ export interface PrintTask extends PrintCommand {
   error?: string
 }
 
+function summarizePrintCommand(command: PrintCommand | PrintTask): Record<string, unknown> {
+  const { content, blocks, ...metadata } = command
+  return {
+    ...metadata,
+    contentLength: content.length,
+    contentBytes: Buffer.byteLength(content, 'utf-8'),
+    blockCount: blocks?.length || 0,
+    blockContentBytes: blocks?.reduce((total, block) => total + Buffer.byteLength(block.content, 'utf-8'), 0) || 0
+  }
+}
+
 class PrintQueue extends EventEmitter {
   private queue: PrintTask[] = []
   private active = false
@@ -37,8 +48,8 @@ class PrintQueue extends EventEmitter {
     }
     this.queue.push(task)
     logger.info(`收到打印任务，状态: 待打印，任务ID: ${task.id}, 格式: ${task.format}`, 'queue', {
-      printCommand: cmd,
-      printTask: task
+      printCommand: summarizePrintCommand(cmd),
+      printTask: summarizePrintCommand(task)
     })
     this.emit('changed')
     return task
@@ -57,7 +68,7 @@ class PrintQueue extends EventEmitter {
         task.status = 'printing'
         task.startedAt = new Date().toISOString()
         logger.info(`打印任务状态: 打印中，任务ID: ${task.id}, 格式: ${task.format}`, 'queue', {
-          printTask: task
+          printTask: summarizePrintCommand(task)
         })
         this.emit('changed')
 
@@ -69,7 +80,7 @@ class PrintQueue extends EventEmitter {
           task.status = 'success'
           task.completedAt = new Date().toISOString()
           logger.info(`打印任务状态: 已完成，任务ID: ${task.id}`, 'queue', {
-            printTask: task
+            printTask: summarizePrintCommand(task)
           })
         } catch (err) {
           task.status = 'failed'
@@ -77,7 +88,7 @@ class PrintQueue extends EventEmitter {
           task.completedAt = new Date().toISOString()
           logger.error(`打印任务状态: 失败，任务ID: ${task.id}, 失败原因: ${task.error}`, 'queue', {
             error: task.error,
-            printTask: task
+            printTask: summarizePrintCommand(task)
           })
         } finally {
           this.currentTask = null

@@ -41,6 +41,13 @@ export interface AppConfig {
 export interface ServiceStatus {
   tcp: { running: boolean; port: number; clients: number }
   ws: { running: boolean; port: number; clients: number }
+  wss: {
+    running: boolean
+    port: number
+    clients: number
+    certificateTrusted: boolean
+    certificateError?: string
+  }
   printQueue: { pending: number; active: number; completed: number; failed: number }
 }
 

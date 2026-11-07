@@ -11,6 +11,7 @@ const emit = defineEmits<{
 const status = ref<ServiceStatus>({
   tcp: { running: false, port: 0, clients: 0 },
   ws: { running: false, port: 0, clients: 0 },
+  wss: { running: false, port: 0, clients: 0, certificateTrusted: false },
   printQueue: { pending: 0, active: 0, completed: 0, failed: 0 }
 })
 
@@ -97,7 +98,7 @@ function openQueueStatus(status: QueueStatusFilter) {
 
       <div class="status-card">
         <div class="card-header">
-          <span class="card-title">WebSocket</span>
+          <span class="card-title">WebSocket (WS)</span>
           <span :class="['badge', status.ws.running ? 'success' : 'error']">
             {{ status.ws.running ? '运行中' : '已停止' }}
           </span>
@@ -110,6 +111,34 @@ function openQueueStatus(status: QueueStatusFilter) {
           <div class="metric">
             <span class="metric-label">在线客户端</span>
             <span class="metric-value">{{ status.ws.clients }}</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="status-card">
+        <div class="card-header">
+          <span class="card-title">WebSocket Secure (WSS)</span>
+          <span :class="['badge', status.wss.running ? 'success' : 'error']">
+            {{ status.wss.running ? '运行中' : '已停止' }}
+          </span>
+        </div>
+        <div class="card-body">
+          <div class="metric">
+            <span class="metric-label">监听端口</span>
+            <span class="metric-value">{{ status.wss.port || '-' }}</span>
+          </div>
+          <div class="metric">
+            <span class="metric-label">在线客户端</span>
+            <span class="metric-value">{{ status.wss.clients }}</span>
+          </div>
+          <div class="metric">
+            <span class="metric-label">证书信任</span>
+            <span :class="['metric-value', status.wss.certificateTrusted ? 'trust-ok' : 'trust-error']">
+              {{ status.wss.certificateTrusted ? '已信任' : '未信任' }}
+            </span>
+          </div>
+          <div v-if="status.wss.certificateError" class="metric-error">
+            {{ status.wss.certificateError }}
           </div>
         </div>
       </div>
@@ -203,7 +232,7 @@ function openQueueStatus(status: QueueStatusFilter) {
 
 .status-grid {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 16px;
 }
 
@@ -215,7 +244,7 @@ function openQueueStatus(status: QueueStatusFilter) {
 }
 
 .status-card.wide {
-  grid-column: span 2;
+  grid-column: span 3;
 }
 
 .queue-card {
@@ -272,6 +301,22 @@ function openQueueStatus(status: QueueStatusFilter) {
   font-weight: 600;
   color: #303133;
   font-size: 14px;
+}
+
+.metric-value.trust-ok {
+  color: #67c23a;
+}
+
+.metric-value.trust-error {
+  color: #e6a23c;
+}
+
+.metric-error {
+  margin-top: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #e6a23c;
+  word-break: break-word;
 }
 
 .queue-stats {

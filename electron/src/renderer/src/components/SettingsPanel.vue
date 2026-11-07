@@ -121,7 +121,7 @@ onUnmounted(() => {
             class="form-input"
             placeholder="9528"
           />
-          <span class="form-hint">Web 系统通过 WebSocket 发送打印指令的端口</span>
+          <span class="form-hint">同一端口同时支持 ws:// 和 wss://，HTTPS 后台推荐连接 wss://localhost:端口</span>
         </div>
       </div>
 
@@ -188,7 +188,7 @@ onUnmounted(() => {
           <strong>TCP Socket 端口</strong>：Web 系统通过 TCP 长连接发送 JSON 格式的打印指令，每条指令以换行符分隔
         </li>
         <li>
-          <strong>WebSocket 端口</strong>：Web 系统通过 WebSocket 连接发送打印指令，支持双向通信
+          <strong>WebSocket 端口</strong>：同一端口同时支持 ws:// 和 wss://，HTTPS 后台推荐使用 wss://localhost:9528
         </li>
         <li>
           <strong>端口变更自动重启</strong>：修改端口后点击保存，Socket 服务会自动停止旧端口并监听新端口，无需手动重启软件
