@@ -1,0 +1,29 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.5.2.0
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "rust", "rust", "{F52741FA-87D1-1BD5-15D9-4446CD04EBA7}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WebView2PrintHelper", "rust\webview2-print-helper\WebView2PrintHelper.csproj", "{2C0327D3-C80D-B24E-26BA-9877C7471891}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{2C0327D3-C80D-B24E-26BA-9877C7471891}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{2C0327D3-C80D-B24E-26BA-9877C7471891}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{2C0327D3-C80D-B24E-26BA-9877C7471891}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{2C0327D3-C80D-B24E-26BA-9877C7471891}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{2C0327D3-C80D-B24E-26BA-9877C7471891} = {F52741FA-87D1-1BD5-15D9-4446CD04EBA7}
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {4A127757-3E74-4DE0-B155-B61FF5FC79CB}
+	EndGlobalSection
+EndGlobal

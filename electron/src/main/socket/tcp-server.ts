@@ -1,0 +1,226 @@
+import { createServer, type Server, type Socket } from 'net'
+import { logger } from '../utils/logger'
+
+export interface PrintPosition {
+  top: number
+  left: number
+}
+
+export interface PrintMargins {
+  top: number
+  left: number
+  right: number
+  bottom: number
+}
+
+export type StandardPaperSize = 'A4' | 'A3' | 'A5' | 'Letter' | 'Legal' | 'B5'
+
+export interface CustomPaperSize {
+  width: number
+  height: number
+  unit: 'mm' | 'in'
+}
+
+export type PaperSize = StandardPaperSize | CustomPaperSize
+
+export interface PrintBlock {
+  content: string
+  position: PrintPosition
+}
+
+export interface PrintCommand {
+  id: string
+  type: 'print'
+  format: 'pdf' | 'html' | 'image' | 'escpos' | 'ecpay'
+  content: string
+  printer?: string
+  copies?: number
+  paperSize?: PaperSize
+  margins?: PrintMargins
+  position?: PrintPosition
+  blocks?: PrintBlock[]
+  options?: Record<string, unknown>
+}
+
+export type CommandHandler = (cmd: PrintCommand, socket: Socket) => Promise<unknown>
+
+export class TcpServer {
+  private server: Server | null = null
+  private port = 0
+  private clients = new Set<Socket>()
+  private handler: CommandHandler | null = null
+  private readonly maxBufferSize = 1024 * 1024
+
+  get status() {
+    return {
+      running: this.server !== null && this.server.listening,
+      port: this.port,
+      clients: this.clients.size
+    }
+  }
+
+  onCommand(handler: CommandHandler): void {
+    this.handler = handler
+  }
+
+  start(port: number): Promise<void> {
+    return new Promise((resolve, reject) => {
+      if (this.server?.listening) {
+        if (this.port === port) {
+          resolve()
+          return
+        }
+        this.stop().then(() => this.doStart(port, resolve, reject))
+        return
+      }
+      this.doStart(port, resolve, reject)
+    })
+  }
+
+  private doStart(port: number, resolve: () => void, reject: (err: Error) => void): void {
+    this.server = createServer((socket) => {
+      this.clients.add(socket)
+      logger.info(`TCP 客户端已连接: ${socket.remoteAddress}:${socket.remotePort}`, 'tcp')
+
+      let buffer = ''
+      socket.on('data', (data) => {
+        buffer += data.toString('utf-8')
+
+        if (buffer.length > this.maxBufferSize) {
+          logger.error(`TCP 接收缓冲区超过限制，已断开客户端: ${socket.remoteAddress}:${socket.remotePort}`, 'tcp')
+          socket.write(JSON.stringify({ success: false, error: '指令数据过大或缺少分隔符' }) + '\n')
+          socket.destroy()
+          return
+        }
+
+        // 支持换行分隔的 JSON 指令
+        const lines = buffer.split('\n')
+        buffer = lines.pop() || ''
+        for (const line of lines) {
+          if (!line.trim()) continue
+          this.handleRawMessage(line.trim(), socket)
+        }
+
+        // 兼容只发送单条完整 JSON、但没有追加换行符的客户端。
+        if (buffer.trim() && this.tryHandleCompleteJson(buffer, socket)) {
+          buffer = ''
+        }
+      })
+
+      socket.on('end', () => {
+        const pending = buffer.trim()
+        if (!pending) return
+
+        if (this.tryHandleCompleteJson(pending, socket)) {
+          buffer = ''
+          return
+        }
+
+        logger.warn(
+          `TCP 客户端关闭连接时仍有未解析数据，可能缺少换行符或 JSON 不完整，长度: ${pending.length}`,
+          'tcp'
+        )
+        socket.write(JSON.stringify({ success: false, error: '指令格式错误或缺少换行分隔符' }) + '\n')
+        buffer = ''
+      })
+
+      socket.on('close', () => {
+        this.clients.delete(socket)
+        logger.info(`TCP 客户端已断开: ${socket.remoteAddress}:${socket.remotePort}`, 'tcp')
+      })
+
+      socket.on('error', (err) => {
+        logger.error(`TCP 客户端错误: ${err.message}`, 'tcp')
+        this.clients.delete(socket)
+      })
+    })
+
+    this.server.on('error', (err) => {
+      logger.error(`TCP 服务错误: ${err.message}`, 'tcp')
+      if (this.server && !this.server.listening) {
+        this.server = null
+        this.port = 0
+      }
+      reject(err)
+    })
+
+    this.server.listen(port, '0.0.0.0', () => {
+      this.port = port
+      logger.info(`TCP Socket 服务已启动，端口: ${port}`, 'tcp')
+      resolve()
+    })
+  }
+
+  private tryHandleCompleteJson(raw: string, socket: Socket): boolean {
+    try {
+      JSON.parse(raw)
+      this.handleRawMessage(raw.trim(), socket)
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  private async handleRawMessage(raw: string, socket: Socket): Promise<void> {
+    try {
+      logger.info(`收到 TCP 消息，长度: ${raw.length}`, 'tcp')
+      const cmd = JSON.parse(raw) as PrintCommand
+      if (cmd.type !== 'print') {
+        socket.write(JSON.stringify({ success: false, error: '未知指令类型' }) + '\n')
+        return
+      }
+      logger.info(`收到打印指令: ${cmd.id}, 格式: ${cmd.format}`, 'tcp')
+      const result = this.handler ? await this.handler(cmd, socket) : { success: false, error: '未设置处理器' }
+      const failed = typeof result === 'object' && result !== null && 'status' in result && result.status === 'failed'
+      socket.write(JSON.stringify({
+        success: !failed,
+        result,
+        error: failed && 'error' in result ? result.error : undefined
+      }) + '\n')
+    } catch (err) {
+      logger.error(`解析指令失败: ${(err as Error).message}`, 'tcp')
+      socket.write(JSON.stringify({ success: false, error: '指令格式错误' }) + '\n')
+    }
+  }
+
+  stop(): Promise<void> {
+    return new Promise((resolve) => {
+      if (!this.server) {
+        resolve()
+        return
+      }
+      // 断开所有客户端，避免 server.close() 一直等待连接关闭
+      for (const client of this.clients) {
+        client.destroy()
+      }
+      this.clients.clear()
+
+      // 兜底超时：如果某个连接未正确触发 close，3 秒后强制认为已关闭，
+      // 防止服务停止卡住导致应用无法退出
+      const timer = setTimeout(() => {
+        logger.warn('TCP 服务关闭超时，强制结束', 'tcp')
+        this.server = null
+        this.port = 0
+        resolve()
+      }, 3000)
+
+      // closeAllConnections 在 Node 18+ 提供，可强制关闭所有剩余连接
+      ;(this.server as unknown as { closeAllConnections?: () => void }).closeAllConnections?.()
+      this.server.close(() => {
+        clearTimeout(timer)
+        logger.info('TCP Socket 服务已停止', 'tcp')
+        this.server = null
+        this.port = 0
+        resolve()
+      })
+    })
+  }
+
+  broadcast(data: string): void {
+    for (const client of this.clients) {
+      if (!client.destroyed) {
+        client.write(data + '\n')
+      }
+    }
+  }
+}

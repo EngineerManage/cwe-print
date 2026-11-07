@@ -1,0 +1,54 @@
+appId: com.cwe.print
+productName: CWE Print
+directories:
+  buildResources: build
+files:
+  - '!**/.vscode/*'
+  - '!src/*'
+  - '!electron.vite.config.{js,ts,mjs,cjs}'
+  - '!{.eslintignore,.eslintrc.cjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
+  - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
+  - '!{.env,.env.*}'
+asarUnpack:
+  - '**/*.{node,dll}'
+mac:
+  icon: build/icon.png
+  artifactName: CWE-Print-${version}-mac-${arch}.${ext}
+  target:
+    - target: dmg
+      arch:
+        - x64
+        - arm64
+    - target: zip
+      arch:
+        - x64
+        - arm64
+  entitlementsInherit: build/entitlements.mac.plist
+  extendInfo:
+    - NSCameraUsageDescription: Application requests access to the device's camera.
+    - NSMicrophoneUsageDescription: Application requests access to the device's microphone.
+    - NSDocumentsFolderUsageDescription: Application requests access to the user's Documents folder.
+    - NSDownloadsFolderUsageDescription: Application requests access to the user's Downloads folder.
+win:
+  icon: build/icon.png
+  artifactName: CWE-Print-${version}-win-${arch}.${ext}
+  target:
+    - target: nsis
+      arch:
+        - x64
+        - ia32
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: always
+linux:
+  icon: build/icon.png
+  target:
+    - target: AppImage
+      arch:
+        - x64
+publish:
+  provider: github
+  owner: EngineerManage
+  repo: cwe-print
+copyright: Copyright © 2026 CWE
