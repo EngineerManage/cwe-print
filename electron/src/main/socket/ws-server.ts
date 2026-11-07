@@ -35,6 +35,7 @@ export class WsServer {
   private handler: WSCommandHandler | null = null
   private certificateTrusted = false
   private certificateError: string | undefined
+  private startPromise: Promise<void> | null = null
 
   get status(): { ws: EndpointStatus; wss: SecureEndpointStatus } {
     return {
@@ -58,6 +59,11 @@ export class WsServer {
   }
 
   async start(port: number): Promise<void> {
+    if (this.startPromise) {
+      await this.startPromise
+      return this.start(port)
+    }
+
     if (
       this.wsEndpoint &&
       this.wssEndpoint &&
@@ -68,6 +74,18 @@ export class WsServer {
       return
     }
 
+    const startPromise = this.startInternal(port)
+    this.startPromise = startPromise
+    try {
+      await startPromise
+    } finally {
+      if (this.startPromise === startPromise) {
+        this.startPromise = null
+      }
+    }
+  }
+
+  private async startInternal(port: number): Promise<void> {
     await this.stop()
     const wsEndpoint = this.createEndpoint('WS')
     const wssEndpoint = this.createEndpoint('WSS')
